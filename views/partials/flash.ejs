@@ -1,0 +1,6 @@
+<% if (typeof flash !== 'undefined' && flash) { %>
+  <div class="alert alert-<%= flash.type === 'error' ? 'error' : flash.type === 'warn' ? 'warn' : 'success' %>">
+    <span class="alert-icon"><%- include('icon', { name: flash.type === 'error' ? 'alert' : 'check' }) %></span>
+    <div><%= flash.message %></div>
+  </div>
+<% } %>

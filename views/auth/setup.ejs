@@ -1,0 +1,33 @@
+<% layout('layouts/blank') %>
+<div class="card">
+  <div class="card-body">
+    <h2>Setup Awal</h2>
+    <p class="text-mute text-sm mb-2">Buat akun admin. Ini hanya muncul sekali.</p>
+
+    <% if (error) { %>
+      <div class="alert alert-error">
+        <span class="alert-icon"><%- include('../partials/icon', { name: 'alert' }) %></span>
+        <div><%= error %></div>
+      </div>
+    <% } %>
+
+    <form method="post" action="/setup">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" minlength="3" required autofocus autocomplete="username">
+        <div class="hint">Minimal 3 karakter.</div>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" minlength="8" required autocomplete="new-password">
+        <div class="hint">Minimal 8 karakter. Simpan baik-baik — tidak ada fitur reset lewat email.</div>
+      </div>
+      <div class="field">
+        <label for="confirm">Ulangi Password</label>
+        <input id="confirm" name="confirm" type="password" minlength="8" required autocomplete="new-password">
+      </div>
+      <button class="btn btn-primary btn-block" type="submit">Buat Akun &amp; Mulai</button>
+    </form>
+  </div>
+</div>

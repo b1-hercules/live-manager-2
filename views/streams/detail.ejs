@@ -1,0 +1,412 @@
+<% layout('layouts/main') %>
+
+<div class="flex items-center gap-1 wrap mb-2">
+  <span class="badge badge-<%= stream.status === 'live' ? 'live' : stream.status === 'error' ? 'live' : stream.status === 'scheduled' ? 'info' : stream.status === 'starting' ? 'warn' : 'muted' %>" id="statusBadge">
+    <% if (stream.status === 'live') { %><span class="dot dot-pulse"></span><% } %>
+    <%= stream.status.toUpperCase() %>
+  </span>
+  <% if (stream.status === 'live') { %>
+    <span class="text-sm text-mute">uptime <strong id="uptimeText"><%= uptime %></strong></span>
+  <% } %>
+  <% if (stream.restart_count) { %>
+    <span class="badge badge-warn"><%= stream.restart_count %> restart</span>
+  <% } %>
+
+  <div class="flex gap-1 wrap" style="margin-left:auto">
+    <% if (stream.isActive) { %>
+      <form method="post" action="/streams/<%= stream.id %>/restart" data-confirm="Restart siaran? Akan ada jeda beberapa detik.">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn btn-sm" type="submit"><%- include('../partials/icon', { name: 'refresh' }) %> Restart</button>
+      </form>
+      <form method="post" action="/streams/<%= stream.id %>/stop" data-confirm="Hentikan siaran ini?">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn btn-danger btn-sm" type="submit"><%- include('../partials/icon', { name: 'stop' }) %> Stop</button>
+      </form>
+    <% } else { %>
+      <form method="post" action="/streams/<%= stream.id %>/start">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn btn-primary btn-sm" type="submit"><%- include('../partials/icon', { name: 'play' }) %> Mulai Siaran</button>
+      </form>
+    <% } %>
+    <a href="/streams/<%= stream.id %>/edit" class="btn btn-sm"><%- include('../partials/icon', { name: 'edit' }) %> Ubah</a>
+    <form method="post" action="/streams/<%= stream.id %>/delete" data-confirm="Hapus stream &quot;<%= stream.title %>&quot;? Video sumbernya tidak ikut terhapus.">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="btn btn-danger btn-sm" type="submit"><%- include('../partials/icon', { name: 'trash' }) %></button>
+    </form>
+  </div>
+</div>
+
+<% if (stream.error_message) { %>
+  <div class="alert alert-error">
+    <span class="alert-icon"><%- include('../partials/icon', { name: 'alert' }) %></span>
+    <div><strong>Error terakhir:</strong> <%= stream.error_message %></div>
+  </div>
+<% } %>
+
+<% if (warnings.length) { %>
+  <div class="alert alert-warn">
+    <span class="alert-icon"><%- include('../partials/icon', { name: 'alert' }) %></span>
+    <div>
+      <strong>Perlu diperhatikan</strong>
+      <ul><% warnings.forEach(function (w) { %><li><%= w %></li><% }); %></ul>
+    </div>
+  </div>
+<% } %>
+
+<div class="grid grid-main">
+  <div>
+    <!-- ------------------------------------------------- rotasi live -->
+    <div class="card">
+      <div class="card-head">
+        <h2><%- include('../partials/icon', { name: 'rotate' }) %> Rotasi Metadata</h2>
+        <% if (stream.rotation_profile_id) { %>
+          <span class="badge badge-<%= stream.rotation_enabled ? 'accent' : 'muted' %>">
+            <%= stream.rotation_enabled ? 'AKTIF' : 'MATI' %>
+          </span>
+        <% } %>
+      </div>
+
+      <% if (!stream.rotation_profile_id) { %>
+        <div class="empty" style="padding:34px 20px">
+          <div class="empty-icon"><%- include('../partials/icon', { name: 'rotate' }) %></div>
+          <h3>Rotasi belum diatur</h3>
+          <p>Pilih profil rotasi dan channel YouTube di halaman Ubah untuk mengganti judul, deskripsi, tags, dan thumbnail secara otomatis saat siaran berjalan.</p>
+          <a href="/streams/<%= stream.id %>/edit" class="btn btn-primary btn-sm">Atur Rotasi</a>
+        </div>
+      <% } else { %>
+        <div class="card-body">
+          <dl class="kv mb-2">
+            <dt>Profil</dt>
+            <dd><a href="/rotations/<%= stream.rotation_profile_id %>"><%= stream.rotation_profile_name %></a>
+                <span class="badge badge-muted"><%= stream.rotation_mode %></span></dd>
+            <dt>Channel</dt>
+            <dd><% if (account) { %><%= account.name %><% } else { %><span class="text-mute">belum dipilih</span><% } %></dd>
+            <dt>Target video</dt>
+            <dd>
+              <% if (stream.resolved_video_id) { %>
+                <a href="https://youtube.com/watch?v=<%= stream.resolved_video_id %>" target="_blank" rel="noopener" class="mono"><%= stream.resolved_video_id %></a>
+              <% } else if (stream.youtube_video_id) { %>
+                <span class="mono"><%= stream.youtube_video_id %></span> <span class="text-xs text-mute">(manual)</span>
+              <% } else { %>
+                <span class="text-mute">belum terdeteksi</span>
+              <% } %>
+            </dd>
+            <dt>Rotasi berikutnya</dt>
+            <dd id="nextRotation"><%= rotationState && rotationState.next_run_at ? new Date(rotationState.next_run_at).toLocaleString('id-ID') : '—' %></dd>
+            <% if (quota) { %>
+              <dt>Kuota tersisa</dt>
+              <dd id="quotaLeft"><%= quota.remaining.toLocaleString('id-ID') %> / <%= quota.limit.toLocaleString('id-ID') %> unit</dd>
+            <% } %>
+          </dl>
+
+          <div class="btn-row">
+            <form method="post" action="/streams/<%= stream.id %>/rotation/toggle">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn-sm <%= stream.rotation_enabled ? '' : 'btn-primary' %>" type="submit">
+                <%= stream.rotation_enabled ? 'Matikan Rotasi' : 'Aktifkan Rotasi' %>
+              </button>
+            </form>
+            <button class="btn btn-sm" type="button" id="rotateNowBtn" <%= stream.status === 'live' ? '' : 'disabled' %>>
+              <%- include('../partials/icon', { name: 'rotate' }) %> Rotasi Sekarang
+            </button>
+            <button class="btn btn-sm" type="button" id="detectBtn">
+              <%- include('../partials/icon', { name: 'target' }) %> Deteksi Broadcast
+            </button>
+            <form method="post" action="/streams/<%= stream.id %>/rotation/reset" data-confirm="Kembalikan urutan rotasi ke varian pertama?">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn-ghost btn-sm" type="submit">Reset Urutan</button>
+            </form>
+          </div>
+          <% if (stream.status !== 'live') { %>
+            <div class="hint mt-1">Tombol "Rotasi Sekarang" aktif saat stream berstatus LIVE.</div>
+          <% } %>
+        </div>
+
+        <!-- pratinjau varian berikutnya -->
+        <% if (rotationPreview) { %>
+          <div class="card-body" style="border-top:1px solid var(--border-soft)">
+            <div class="divider-label" style="margin-top:0">Varian berikutnya</div>
+            <% if (rotationPreview.mode === 'bundle' && rotationPreview.item) { %>
+              <div class="flex gap-2 wrap">
+                <% if (rotationPreview.item.thumbnail) { %>
+                  <img class="thumb" style="width:180px;aspect-ratio:16/9" src="<%= mediaUrl(rotationPreview.item.thumbnail) %>" alt="">
+                <% } %>
+                <div class="flex-1">
+                  <div class="text-xs text-mute mb-1"><%= rotationPreview.item.label %></div>
+                  <% if (rotationPreview.item.title) { %>
+                    <div style="font-weight:650;font-size:15px;margin-bottom:6px"><%= rotationPreview.item.title %></div>
+                  <% } %>
+                  <% if (rotationPreview.item.description) { %>
+                    <div class="text-sm text-mute" style="white-space:pre-wrap;max-height:110px;overflow:auto"><%= rotationPreview.item.description %></div>
+                  <% } %>
+                  <% if (rotationPreview.item.tags.length) { %>
+                    <div class="mt-1">
+                      <% rotationPreview.item.tags.forEach(function (t) { %><span class="tag-chip"><%= t %></span><% }); %>
+                    </div>
+                  <% } %>
+                </div>
+              </div>
+            <% } else if (rotationPreview.mode === 'independent') { %>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Field</th><th>Nilai berikutnya</th><th>Interval</th><th>Jadwal</th></tr></thead>
+                  <tbody>
+                    <% rotationPreview.fields.forEach(function (f) { %>
+                      <tr>
+                        <td><span class="badge badge-accent"><%= f.label %></span></td>
+                        <td class="text-sm">
+                          <% if (f.field === 'thumbnail' && f.preview) { %>
+                            <img class="thumb thumb-sm" src="<%= mediaUrl(f.preview) %>" alt="">
+                          <% } else { %>
+                            <span class="truncate" style="display:block;max-width:340px"><%= f.preview %></span>
+                          <% } %>
+                        </td>
+                        <td class="text-sm"><%= f.intervalMinutes %> mnt</td>
+                        <td class="text-xs text-mute"><%= f.nextRunAt ? new Date(f.nextRunAt).toLocaleTimeString('id-ID') : 'segera' %></td>
+                      </tr>
+                    <% }); %>
+                  </tbody>
+                </table>
+              </div>
+            <% } else { %>
+              <p class="text-sm text-mute mb-0">Profil ini belum punya varian aktif.</p>
+            <% } %>
+          </div>
+        <% } %>
+
+        <% if (rotationLogs.length) { %>
+          <div class="card-body" style="border-top:1px solid var(--border-soft)">
+            <div class="divider-label" style="margin-top:0">Riwayat rotasi stream ini</div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Waktu</th><th>Perubahan</th><th class="num">Kuota</th><th>Status</th></tr></thead>
+                <tbody id="rotationLogBody">
+                  <% rotationLogs.forEach(function (l) { %>
+                    <tr>
+                      <td class="text-xs text-mute nowrap"><%= new Date(l.applied_at).toLocaleString('id-ID', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }) %></td>
+                      <td class="text-sm">
+                        <% if (l.payloadObj) { %>
+                          <% Object.keys(l.payloadObj).forEach(function (k) { %><span class="tag-chip"><%= k %></span><% }); %>
+                        <% } %>
+                        <% if (l.message) { %><div class="text-xs text-mute"><%= l.message %></div><% } %>
+                      </td>
+                      <td class="num"><%= l.quota_cost %></td>
+                      <td><span class="badge badge-<%= l.status === 'success' ? 'ok' : l.status === 'error' ? 'live' : 'warn' %>"><%= l.status %></span></td>
+                    </tr>
+                  <% }); %>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        <% } %>
+      <% } %>
+    </div>
+
+    <!-- --------------------------------------------------------- log -->
+    <div class="card">
+      <div class="card-head">
+        <h2>Log Siaran</h2>
+        <span class="sub">real-time saat LIVE</span>
+      </div>
+      <div class="card-body">
+        <div class="logbox" id="logBox">
+          <% if (!logs.length) { %>
+            <div class="text-mute">Belum ada log.</div>
+          <% } %>
+          <%# Model mengembalikan terbaru dulu; dibalik agar terbaru ada di bawah,
+              sama seperti terminal dan sama dengan perilaku polling di bawah. %>
+          <% logs.slice().reverse().forEach(function (l) { %>
+            <div class="logline <%= l.level %>">
+              <time><%= new Date(l.created_at).toLocaleTimeString('id-ID') %></time>
+              <span class="msg"><%= l.message %></span>
+            </div>
+          <% }); %>
+        </div>
+      </div>
+    </div>
+
+    <details class="collapse mt-2">
+      <summary>Perintah FFmpeg yang dipakai</summary>
+      <div class="collapse-body">
+        <% if (commandPreview) { %>
+          <pre class="cmd"><%= commandPreview %></pre>
+          <div class="hint mt-1">Stream key sengaja disamarkan. Berguna untuk debug manual di terminal.</div>
+        <% } else { %>
+          <p class="text-mute text-sm mb-0">Belum bisa disusun — pastikan video sumber dan tujuan RTMP sudah dipilih.</p>
+        <% } %>
+      </div>
+    </details>
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card-head"><h2>Konfigurasi</h2></div>
+      <div class="card-body">
+        <% if (video && video.thumbnail_path) { %>
+          <img class="thumb thumb-lg mb-2" src="<%= mediaUrl(video.thumbnail_path) %>" alt="">
+        <% } %>
+        <dl class="kv">
+          <dt>Video</dt><dd class="text-sm"><%= video ? video.title : '—' %></dd>
+          <% if (video) { %>
+            <dt>Sumber</dt><dd class="mono text-xs"><%= video.width %>×<%= video.height %> · <%= formatDuration(video.duration) %></dd>
+            <dt>Codec</dt><dd class="mono text-xs"><%= (video.video_codec || '?').toUpperCase() %> / <%= video.has_audio ? (video.audio_codec || '?').toUpperCase() : 'tanpa audio' %></dd>
+          <% } %>
+          <dt>Mode</dt><dd><%= stream.encode_mode === 'copy' ? 'Copy' : 'Re-encode' %></dd>
+          <% if (stream.encode_mode === 'reencode') { %>
+            <dt>Output</dt><dd class="mono text-xs"><%= stream.resolution %> · <%= stream.bitrate %>k · <%= stream.fps %>fps</dd>
+            <dt>Preset</dt><dd class="mono text-xs"><%= stream.preset %></dd>
+          <% } %>
+          <dt>Loop</dt><dd><%= stream.loop_video ? 'ya' : 'tidak' %></dd>
+          <dt>Auto-restart</dt><dd><%= stream.auto_restart ? 'ya' : 'tidak' %></dd>
+          <% if (stream.schedule_start_at) { %>
+            <dt>Mulai</dt><dd class="text-xs"><%= new Date(stream.schedule_start_at).toLocaleString('id-ID') %></dd>
+          <% } %>
+          <% if (stream.schedule_end_at) { %>
+            <dt>Berhenti</dt><dd class="text-xs"><%= new Date(stream.schedule_end_at).toLocaleString('id-ID') %></dd>
+          <% } %>
+          <% if (stream.duration_minutes) { %>
+            <dt>Durasi</dt><dd><%= stream.duration_minutes %> menit</dd>
+          <% } %>
+        </dl>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Tujuan</h2></div>
+      <div class="card-body tight">
+        <% if (!destinations.length) { %>
+          <div class="empty" style="padding:26px 16px"><p class="mb-0">Belum ada tujuan dipilih.</p></div>
+        <% } else { %>
+          <% destinations.forEach(function (d) {
+               const meta = platforms[d.platform] || platforms.custom; %>
+            <div class="item-row" style="padding:11px 14px">
+              <span class="dot" style="color:<%= meta.color %>;margin-top:6px"></span>
+              <div class="body">
+                <div class="t" style="font-size:12.5px"><%= d.name %></div>
+                <div class="text-xs text-mute"><%= meta.label %> · key <%= maskKey(d.stream_key) %></div>
+                <% if (!d.active) { %><span class="badge badge-warn mt-1">nonaktif — dilewati</span><% } %>
+              </div>
+            </div>
+          <% }); %>
+        <% } %>
+      </div>
+    </div>
+
+    <div class="card" id="statsCard" <%= stream.status === 'live' ? '' : 'hidden' %>>
+      <div class="card-head"><h2>Encoder</h2></div>
+      <div class="card-body">
+        <dl class="kv">
+          <dt>FPS</dt><dd class="mono" id="stFps"><%= runtime ? runtime.stats.fps : '—' %></dd>
+          <dt>Bitrate</dt><dd class="mono" id="stBitrate"><%= runtime ? runtime.stats.bitrate : '—' %></dd>
+          <dt>Speed</dt><dd class="mono" id="stSpeed"><%= runtime ? runtime.stats.speed : '—' %></dd>
+          <dt>Waktu</dt><dd class="mono" id="stTime"><%= runtime ? runtime.stats.time : '—' %></dd>
+          <dt>PID</dt><dd class="mono" id="stPid"><%= runtime ? runtime.pid : '—' %></dd>
+        </dl>
+        <div class="hint mt-1">
+          <strong>Speed</strong> harus mendekati <code>1x</code>. Kalau jauh di bawah 1x, CPU tidak
+          sanggup meng-encode secara real-time — turunkan resolusi atau pakai mode Copy.
+        </div>
+      </div>
+    </div>
+
+    <% if (sessions.length) { %>
+      <div class="card">
+        <div class="card-head"><h2>Sesi Terakhir</h2></div>
+        <div class="card-body tight">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Mulai</th><th class="num">Durasi</th><th class="num">Rotasi</th></tr></thead>
+              <tbody>
+                <% sessions.forEach(function (ss) { %>
+                  <tr>
+                    <td class="text-xs"><%= new Date(ss.started_at).toLocaleString('id-ID', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }) %></td>
+                    <td class="num"><%= ss.ended_at ? formatDuration(ss.duration_seconds) : 'berjalan' %></td>
+                    <td class="num"><%= ss.rotations_count %></td>
+                  </tr>
+                <% }); %>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    <% } %>
+  </div>
+</div>
+
+<script>
+  const STREAM_ID = <%= stream.id %>;
+
+  document.getElementById('rotateNowBtn')?.addEventListener('click', async function (e) {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    const original = btn.innerHTML;
+    btn.textContent = 'Merotasi...';
+    try {
+      const res = await LM.post('/streams/' + STREAM_ID + '/rotation/now');
+      LM.toast(res.message || 'Rotasi selesai.', res.skipped ? 'info' : 'success');
+      if (!res.skipped) setTimeout(() => location.reload(), 1200);
+    } catch (err) {
+      LM.toast(err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = original;
+    }
+  });
+
+  document.getElementById('detectBtn')?.addEventListener('click', async function (e) {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const res = await LM.post('/streams/' + STREAM_ID + '/rotation/detect');
+      LM.toast(res.message, res.found ? 'success' : 'info');
+      if (res.found) setTimeout(() => location.reload(), 1200);
+    } catch (err) {
+      LM.toast(err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // Panel live: status, statistik encoder, dan log terbaru.
+  let lastStatus = '<%= stream.status %>';
+  LM.poll('/api/streams/' + STREAM_ID, 5000, function (data) {
+    const s = data.stream;
+
+    if (s.status !== lastStatus) { location.reload(); return; }
+
+    document.getElementById('uptimeText') && (document.getElementById('uptimeText').textContent = s.uptime);
+
+    if (data.runtime) {
+      const st = data.runtime.stats;
+      document.getElementById('stFps').textContent = st.fps || '—';
+      document.getElementById('stBitrate').textContent = st.bitrate || '—';
+      document.getElementById('stSpeed').textContent = st.speed || '—';
+      document.getElementById('stTime').textContent = st.time || '—';
+      document.getElementById('stPid').textContent = data.runtime.pid || '—';
+    }
+
+    const next = document.getElementById('nextRotation');
+    if (next && data.rotation.nextRunAt) {
+      next.textContent = new Date(data.rotation.nextRunAt).toLocaleString('id-ID') +
+        ' (' + LM.relative(data.rotation.nextRunAt) + ')';
+    }
+
+    const quotaEl = document.getElementById('quotaLeft');
+    if (quotaEl && data.quota) {
+      quotaEl.textContent = data.quota.remaining.toLocaleString('id-ID') + ' / ' + data.quota.limit.toLocaleString('id-ID') + ' unit';
+    }
+
+    const box = document.getElementById('logBox');
+    if (box && data.logs.length) {
+      const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+      box.innerHTML = data.logs.slice().reverse().map(function (l) {
+        const time = new Date(l.created_at).toLocaleTimeString('id-ID');
+        const msg = l.message.replace(/[&<>]/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c];
+        });
+        return '<div class="logline ' + l.level + '"><time>' + time + '</time><span class="msg">' + msg + '</span></div>';
+      }).join('');
+      if (atBottom) box.scrollTop = box.scrollHeight;
+    }
+  });
+</script>

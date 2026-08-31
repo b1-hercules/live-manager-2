@@ -1,0 +1,73 @@
+<% layout('layouts/main') %>
+
+<p class="page-intro">
+  Setiap perubahan metadata yang dikirim ke YouTube dicatat di sini, lengkap dengan biaya kuotanya.
+  Gunakan kolom waktu untuk mencocokkan lonjakan penonton di YouTube Analytics dengan varian yang
+  sedang tayang saat itu.
+</p>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Riwayat Rotasi</h2>
+    <span class="badge badge-muted"><%= logs.length %> catatan terakhir</span>
+  </div>
+
+  <% if (!logs.length) { %>
+    <div class="empty">
+      <div class="empty-icon"><%- include('../partials/icon', { name: 'history' }) %></div>
+      <h3>Belum ada riwayat</h3>
+      <p>Riwayat terisi setelah stream dengan rotasi aktif mulai berjalan.</p>
+    </div>
+  <% } else { %>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Waktu</th>
+            <th>Stream</th>
+            <th>Field</th>
+            <th>Nilai yang dipasang</th>
+            <th class="num">Kuota</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% logs.forEach(function (l) { %>
+            <tr>
+              <td class="text-xs text-mute nowrap">
+                <%= new Date(l.applied_at).toLocaleString('id-ID', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', second:'2-digit' }) %>
+              </td>
+              <td class="truncate" style="max-width:160px"><%= l.stream_title || '—' %></td>
+              <td>
+                <% if (l.field) { %>
+                  <span class="badge badge-accent"><%= l.field %></span>
+                <% } else if (l.payloadObj) { %>
+                  <% Object.keys(l.payloadObj).forEach(function (k) { %><span class="tag-chip"><%= k %></span><% }); %>
+                <% } else { %>
+                  <span class="text-mute">—</span>
+                <% } %>
+              </td>
+              <td class="text-sm" style="max-width:420px">
+                <% if (l.payloadObj) { %>
+                  <% Object.entries(l.payloadObj).forEach(function ([k, v]) { %>
+                    <div class="truncate">
+                      <span class="text-mute text-xs"><%= k %>:</span>
+                      <%= Array.isArray(v) ? v.join(', ') : String(v).slice(0, 140) %>
+                    </div>
+                  <% }); %>
+                <% } %>
+                <% if (l.message) { %>
+                  <div class="text-xs" style="color:<%= l.status === 'error' ? 'var(--live)' : 'var(--text-mute)' %>"><%= l.message %></div>
+                <% } %>
+              </td>
+              <td class="num"><%= l.quota_cost %></td>
+              <td>
+                <span class="badge badge-<%= l.status === 'success' ? 'ok' : l.status === 'error' ? 'live' : 'warn' %>"><%= l.status %></span>
+              </td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>

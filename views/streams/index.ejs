@@ -1,0 +1,116 @@
+<% layout('layouts/main') %>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Semua Stream</h2>
+    <span class="badge badge-muted"><%= streams.length %></span>
+    <a href="/streams/new" class="btn btn-primary btn-sm">
+      <%- include('../partials/icon', { name: 'plus' }) %> Stream Baru
+    </a>
+  </div>
+
+  <% if (!streams.length) { %>
+    <div class="empty">
+      <div class="empty-icon"><%- include('../partials/icon', { name: 'broadcast' }) %></div>
+      <h3>Belum ada stream</h3>
+      <p>
+        Sebuah stream menggabungkan satu video sumber, satu atau lebih tujuan RTMP,
+        dan (opsional) satu profil rotasi metadata.
+      </p>
+      <a href="/streams/new" class="btn btn-primary">Buat Stream Pertama</a>
+    </div>
+  <% } else { %>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Stream</th>
+            <th>Video</th>
+            <th>Tujuan</th>
+            <th>Rotasi</th>
+            <th class="num">Uptime</th>
+            <th class="actions">Aksi</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% streams.forEach(function (s) {
+               const badge = s.status === 'live' ? 'live'
+                           : s.status === 'starting' ? 'warn'
+                           : s.status === 'scheduled' ? 'info'
+                           : s.status === 'error' ? 'live' : 'muted'; %>
+            <tr>
+              <td data-stream-status="<%= s.id %>" data-value="<%= s.status %>">
+                <span class="badge badge-<%= badge %>">
+                  <% if (s.status === 'live') { %><span class="dot dot-pulse"></span><% } %>
+                  <%= s.status.toUpperCase() %>
+                </span>
+              </td>
+              <td>
+                <div style="font-weight:600"><a href="/streams/<%= s.id %>"><%= s.title %></a></div>
+                <div class="text-xs text-mute">
+                  <%= s.encode_mode === 'copy' ? 'Copy' : 'Re-encode ' + s.bitrate + 'k' %>
+                  <% if (s.loop_video) { %> · loop<% } %>
+                  <% if (s.restart_count) { %> · <%= s.restart_count %> restart<% } %>
+                </div>
+              </td>
+              <td class="text-sm">
+                <% if (s.video_thumbnail) { %>
+                  <div class="flex items-center gap-1">
+                    <img class="thumb thumb-sm" src="<%= mediaUrl(s.video_thumbnail) %>" alt="" loading="lazy">
+                    <span class="truncate" style="max-width:130px"><%= s.video_title %></span>
+                  </div>
+                <% } else { %>
+                  <span class="text-mute"><%= s.video_title || '— tidak ada —' %></span>
+                <% } %>
+              </td>
+              <td class="text-sm"><%= s.destination_count %></td>
+              <td>
+                <% if (s.rotation_profile_id) { %>
+                  <span class="badge badge-<%= s.rotation_enabled ? 'accent' : 'muted' %>">
+                    <%= s.rotation_enabled ? 'aktif' : 'mati' %> · <%= s.rotation_mode === 'independent' ? 'indep' : 'bundle' %>
+                  </span>
+                  <div class="text-xs text-mute truncate" style="max-width:130px"><%= s.rotation_profile_name %></div>
+                <% } else { %>
+                  <span class="text-mute text-xs">—</span>
+                <% } %>
+              </td>
+              <td class="num"><%= s.status === 'live' ? s.uptime : '—' %></td>
+              <td class="actions">
+                <div class="btn-row" style="justify-content:flex-end">
+                  <% if (s.isActive) { %>
+                    <form method="post" action="/streams/<%= s.id %>/stop" data-confirm="Hentikan siaran ini?">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <button class="btn btn-danger btn-sm" type="submit">
+                        <%- include('../partials/icon', { name: 'stop' }) %> Stop
+                      </button>
+                    </form>
+                  <% } else { %>
+                    <form method="post" action="/streams/<%= s.id %>/start">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <button class="btn btn-sm" type="submit">
+                        <%- include('../partials/icon', { name: 'play' }) %> Mulai
+                      </button>
+                    </form>
+                  <% } %>
+                  <a href="/streams/<%= s.id %>" class="btn btn-ghost btn-sm">Detail</a>
+                </div>
+              </td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>
+
+<script>
+  // Status berubah di latar (auto-restart, jadwal) — refresh kalau ada yang beda.
+  LM.poll('/api/overview', 12000, function (data) {
+    const changed = data.streams.some(function (s) {
+      const row = document.querySelector('[data-stream-status="' + s.id + '"]');
+      return row && row.dataset.value !== s.status;
+    });
+    if (changed) location.reload();
+  });
+</script>

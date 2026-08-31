@@ -1,0 +1,55 @@
+<aside class="sidebar" id="sidebar">
+  <div class="brand">
+    <div class="brand-mark">LM</div>
+    <div>
+      <div class="brand-name"><%= appName %></div>
+      <div class="brand-ver">v<%= appVersion %></div>
+    </div>
+  </div>
+
+  <nav class="nav">
+    <a href="/" class="nav-item <%= currentPath === '/' ? 'active' : '' %>">
+      <%- include('icon', { name: 'dashboard' }) %> Dashboard
+    </a>
+
+    <div class="nav-label">Siaran</div>
+    <a href="/streams" class="nav-item <%= currentPath.startsWith('/streams') ? 'active' : '' %>">
+      <%- include('icon', { name: 'broadcast' }) %> Stream
+    </a>
+    <a href="/videos" class="nav-item <%= currentPath.startsWith('/videos') ? 'active' : '' %>">
+      <%- include('icon', { name: 'video' }) %> Galeri Video
+    </a>
+    <a href="/destinations" class="nav-item <%= currentPath.startsWith('/destinations') ? 'active' : '' %>">
+      <%- include('icon', { name: 'target' }) %> Tujuan RTMP
+    </a>
+
+    <div class="nav-label">Rotasi Metadata</div>
+    <a href="/rotations" class="nav-item <%= currentPath.startsWith('/rotations') ? 'active' : '' %>">
+      <%- include('icon', { name: 'rotate' }) %> Profil Rotasi
+    </a>
+    <a href="/rotation-history" class="nav-item <%= currentPath === '/rotation-history' ? 'active' : '' %>">
+      <%- include('icon', { name: 'history' }) %> Riwayat
+    </a>
+    <a href="/accounts" class="nav-item <%= currentPath.startsWith('/accounts') ? 'active' : '' %>">
+      <%- include('icon', { name: 'link' }) %> Akun YouTube
+    </a>
+
+    <div class="nav-label">Sistem</div>
+    <a href="/settings" class="nav-item <%= currentPath.startsWith('/settings') ? 'active' : '' %>">
+      <%- include('icon', { name: 'settings' }) %> Pengaturan
+    </a>
+    <a href="/profile" class="nav-item <%= currentPath.startsWith('/profile') ? 'active' : '' %>">
+      <%- include('icon', { name: 'user' }) %> Profil
+    </a>
+  </nav>
+
+  <div class="sidebar-foot">
+    <form method="post" action="/logout">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="btn btn-ghost btn-sm btn-block" type="submit">
+        <%- include('icon', { name: 'logout' }) %>
+        Keluar<%= currentUser ? ' (' + currentUser.username + ')' : '' %>
+      </button>
+    </form>
+  </div>
+</aside>

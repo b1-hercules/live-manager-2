@@ -1,0 +1,168 @@
+<% layout('layouts/main') %>
+
+<p class="page-intro">
+  Rotasi judul, deskripsi, tags, dan thumbnail dijalankan lewat <strong>YouTube Data API v3</strong>.
+  Hubungkan channel kamu di sini supaya LiveManager punya izin mengubah metadata siaran yang sedang berjalan.
+</p>
+
+<% if (!hasCredentials) { %>
+  <div class="alert alert-warn">
+    <span class="alert-icon"><%- include('../partials/icon', { name: 'alert' }) %></span>
+    <div>
+      <strong>Kredensial Google OAuth belum diisi.</strong>
+      Kamu perlu membuat OAuth Client ID sendiri di Google Cloud Console sebelum bisa menghubungkan channel.
+      <a href="/settings">Isi sekarang di Pengaturan →</a>
+    </div>
+  </div>
+<% } %>
+
+<div class="grid grid-main">
+  <div>
+    <div class="card">
+      <div class="card-head">
+        <h2>Channel Terhubung</h2>
+        <form method="post" action="/accounts/youtube/connect">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn-primary btn-sm" type="submit" <%= hasCredentials ? '' : 'disabled' %>>
+            <%- include('../partials/icon', { name: 'link' }) %> Hubungkan Channel
+          </button>
+        </form>
+      </div>
+
+      <% if (!accounts.length) { %>
+        <div class="empty">
+          <div class="empty-icon"><%- include('../partials/icon', { name: 'link' }) %></div>
+          <h3>Belum ada channel terhubung</h3>
+          <p>Tanpa channel terhubung, stream tetap bisa disiarkan — tapi metadata tidak bisa dirotasi otomatis.</p>
+        </div>
+      <% } else { %>
+        <div class="card-body tight">
+          <% accounts.forEach(function (a) {
+               const pct = Math.min(100, Math.round(a.quota.used / a.quota.limit * 100));
+               const level = pct > 85 ? 'danger' : pct > 60 ? 'warn' : 'ok'; %>
+            <div class="item-row" style="align-items:center">
+              <% if (a.avatar_url) { %>
+                <img src="<%= a.avatar_url %>" alt="" width="40" height="40" style="border-radius:50%;flex:0 0 40px">
+              <% } else { %>
+                <span class="idx" style="width:40px;height:40px;flex:0 0 40px;font-size:15px"><%= (a.name || '?').charAt(0).toUpperCase() %></span>
+              <% } %>
+              <div class="body">
+                <div class="flex items-center gap-1 wrap mb-1">
+                  <span class="t" style="margin:0"><%= a.name %></span>
+                  <span class="badge badge-<%= a.status === 'connected' ? 'ok' : 'live' %>"><%= a.status %></span>
+                </div>
+                <div class="text-xs text-mute mono"><%= a.external_id %></div>
+                <div class="mt-1" style="max-width:340px">
+                  <div class="meter <%= level %>"><span style="width:<%= pct %>%"></span></div>
+                  <div class="text-xs text-mute mt-1">
+                    Kuota hari ini: <%= a.quota.used.toLocaleString('id-ID') %> / <%= a.quota.limit.toLocaleString('id-ID') %> unit
+                    (<%= pct %>%) · reset <%= a.quota.date %> PT
+                  </div>
+                </div>
+                <% if (a.last_error) { %>
+                  <div class="text-xs" style="color:var(--live);margin-top:6px"><%= a.last_error %></div>
+                <% } %>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+                <button class="btn btn-sm" type="button" data-test-account="<%= a.id %>">Tes Koneksi</button>
+                <form method="post" action="/accounts/<%= a.id %>/delete"
+                      data-confirm="Putuskan channel &quot;<%= a.name %>&quot;? Rotasi pada stream yang memakainya akan berhenti.">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <button class="btn btn-danger btn-sm" type="submit">Putuskan</button>
+                </form>
+              </div>
+            </div>
+            <div class="item-row" style="border-top:0;padding-top:0">
+              <span class="idx" style="opacity:0"></span>
+              <form method="post" action="/accounts/<%= a.id %>/quota-limit" class="flex gap-1 items-center">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <label class="text-xs text-mute" style="margin:0">Batas kuota harian</label>
+                <input type="number" name="quota_limit" value="<%= a.quota.limit %>" min="1" step="1" style="width:120px">
+                <button class="btn btn-sm" type="submit">Simpan</button>
+                <span class="text-xs text-mute">Naikkan hanya kalau kamu sudah dapat kuota tambahan dari Google.</span>
+              </form>
+            </div>
+          <% }); %>
+        </div>
+      <% } %>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Cara Membuat OAuth Client</h2></div>
+      <div class="card-body">
+        <ol style="padding-left:20px;line-height:1.9;font-size:13px;margin:0">
+          <li>Buka <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a>, buat project baru.</li>
+          <li>Menu <strong>APIs &amp; Services → Library</strong>, aktifkan <strong>YouTube Data API v3</strong>.</li>
+          <li>Menu <strong>OAuth consent screen</strong>: pilih External, isi nama app, dan tambahkan email kamu sebagai <strong>Test user</strong>.</li>
+          <li>Menu <strong>Credentials → Create Credentials → OAuth client ID</strong>, tipe <strong>Web application</strong>.</li>
+          <li>Di <strong>Authorized redirect URIs</strong>, masukkan persis alamat ini:
+            <div class="copy-row mt-1">
+              <input type="text" value="<%= redirectUri %>" readonly>
+              <button class="btn btn-sm" data-copy="<%= redirectUri %>" data-copy-label="Redirect URI" type="button">
+                <%- include('../partials/icon', { name: 'copy' }) %>
+              </button>
+            </div>
+          </li>
+          <li>Salin Client ID &amp; Client Secret ke <a href="/settings">halaman Pengaturan</a>.</li>
+        </ol>
+        <div class="alert alert-info mt-2" style="margin-bottom:0">
+          <span class="alert-icon"><%- include('../partials/icon', { name: 'info' }) %></span>
+          <div class="text-sm">
+            Selama consent screen masih berstatus <em>Testing</em>, refresh token Google kedaluwarsa
+            setiap 7 hari dan channel harus dihubungkan ulang. Untuk siaran 24/7, publish app-nya
+            (mode Production) — untuk pemakaian pribadi biasanya tidak perlu verifikasi penuh.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Biaya Kuota</h2></div>
+    <div class="card-body">
+      <p class="text-sm text-dim">
+        Google memberi setiap project <strong>10.000 unit per hari</strong>. Tiap operasi punya harga:
+      </p>
+      <dl class="kv mt-2">
+        <% Object.entries(quotaCost).forEach(function ([op, cost]) { %>
+          <dt class="mono text-xs"><%= op %></dt>
+          <dd class="mono"><%= cost %> unit</dd>
+        <% }); %>
+      </dl>
+      <hr>
+      <div class="text-sm text-dim" style="line-height:1.7">
+        Satu rotasi <strong>lengkap</strong> (judul + deskripsi + tags + thumbnail) memakai
+        <strong style="color:var(--accent)">101 unit</strong>:
+        1 untuk membaca snippet, 50 untuk menulisnya, 50 untuk thumbnail.
+      </div>
+      <div class="alert alert-warn mt-2" style="margin-bottom:0">
+        <span class="alert-icon"><%- include('../partials/icon', { name: 'alert' }) %></span>
+        <div class="text-sm">
+          Artinya maksimal <strong>±99 rotasi penuh per hari</strong>, atau satu rotasi tiap ±15 menit
+          untuk siaran 24 jam. Kalau thumbnail tidak ikut dirotasi, biayanya turun ke 51 unit
+          (±196 rotasi/hari).
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('[data-test-account]').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      const id = btn.dataset.testAccount;
+      btn.disabled = true;
+      const original = btn.textContent;
+      btn.textContent = 'Menguji...';
+      try {
+        const res = await LM.post('/accounts/' + id + '/test');
+        LM.toast(res.message, 'success');
+      } catch (err) {
+        LM.toast(err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    });
+  });
+</script>

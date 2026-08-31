@@ -1,0 +1,157 @@
+<% layout('layouts/main') %>
+
+<p class="page-intro">
+  Satu tujuan = satu server RTMP + stream key. Satu stream bisa mengirim ke beberapa tujuan
+  sekaligus lewat muxer <code>tee</code> FFmpeg — video hanya di-encode sekali.
+</p>
+
+<div class="grid grid-main">
+  <div class="card">
+    <div class="card-head">
+      <h2>Daftar Tujuan</h2>
+      <span class="badge badge-muted"><%= destinations.length %></span>
+    </div>
+
+    <% if (!destinations.length) { %>
+      <div class="empty">
+        <div class="empty-icon"><%- include('../partials/icon', { name: 'target' }) %></div>
+        <h3>Belum ada tujuan</h3>
+        <p>Tambahkan tujuan pertama lewat form di sebelah kanan. Stream key bisa diambil dari YouTube Studio → Live Streaming.</p>
+      </div>
+    <% } else { %>
+      <div class="card-body tight">
+        <% destinations.forEach(function (d) {
+             const meta = platforms[d.platform] || platforms.custom; %>
+          <details class="collapse" style="border:0;border-bottom:1px solid var(--border-soft);border-radius:0;background:none">
+            <summary style="padding:13px 16px">
+              <span class="dot" style="color: <%= meta.color %>"></span>
+              <span style="flex:1;min-width:0" class="truncate"><%= d.name %></span>
+              <span class="badge badge-muted"><%= meta.label %></span>
+              <% if (!d.active) { %><span class="badge badge-warn">nonaktif</span><% } %>
+            </summary>
+            <div class="collapse-body">
+              <div class="field">
+                <label>URL RTMP</label>
+                <div class="copy-row">
+                  <input type="text" value="<%= d.rtmp_url %>" readonly>
+                  <button class="btn btn-sm" data-copy="<%= d.rtmp_url %>" data-copy-label="URL RTMP" type="button">
+                    <%- include('../partials/icon', { name: 'copy' }) %>
+                  </button>
+                </div>
+              </div>
+              <div class="field">
+                <label>Stream Key</label>
+                <div class="copy-row">
+                  <input type="password" value="<%= d.stream_key %>" readonly id="key-<%= d.id %>">
+                  <button class="btn btn-sm" type="button"
+                          onclick="const i=document.getElementById('key-<%= d.id %>'); i.type = i.type === 'password' ? 'text' : 'password';">
+                    <%- include('../partials/icon', { name: 'eye' }) %>
+                  </button>
+                  <button class="btn btn-sm" data-copy="<%= d.stream_key %>" data-copy-label="Stream key" type="button">
+                    <%- include('../partials/icon', { name: 'copy' }) %>
+                  </button>
+                </div>
+                <div class="hint">Disimpan terenkripsi (AES-256-GCM) di database.</div>
+              </div>
+
+              <% if (meta.note) { %>
+                <div class="alert alert-info" style="margin:12px 0">
+                  <span class="alert-icon"><%- include('../partials/icon', { name: 'info' }) %></span>
+                  <div class="text-sm"><%= meta.note %></div>
+                </div>
+              <% } %>
+
+              <form method="post" action="/destinations/<%= d.id %>">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <div class="form-grid">
+                  <div class="field">
+                    <label>Nama</label>
+                    <input type="text" name="name" value="<%= d.name %>" required>
+                  </div>
+                  <div class="field">
+                    <label>Platform</label>
+                    <select name="platform">
+                      <% Object.entries(platforms).forEach(function ([key, p]) { %>
+                        <option value="<%= key %>" <%= d.platform === key ? 'selected' : '' %>><%= p.label %></option>
+                      <% }); %>
+                    </select>
+                  </div>
+                  <div class="field span-2">
+                    <label>URL RTMP</label>
+                    <input type="text" name="rtmp_url" value="<%= d.rtmp_url %>" required>
+                  </div>
+                  <div class="field span-2">
+                    <label>Stream Key baru <span class="text-mute">(kosongkan bila tidak diganti)</span></label>
+                    <input type="password" name="stream_key" placeholder="••••••••" autocomplete="off">
+                  </div>
+                </div>
+                <label class="check">
+                  <input type="checkbox" name="active" value="1" <%= d.active ? 'checked' : '' %>>
+                  <div class="check-body">
+                    <div class="check-title">Aktif</div>
+                    <div class="check-desc">Tujuan nonaktif dilewati saat siaran dimulai.</div>
+                  </div>
+                </label>
+                <div class="btn-row mt-1">
+                  <button class="btn btn-primary btn-sm" type="submit">Simpan Perubahan</button>
+                </div>
+              </form>
+
+              <form method="post" action="/destinations/<%= d.id %>/delete" class="mt-1"
+                    data-confirm="Hapus tujuan &quot;<%= d.name %>&quot;?">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <button class="btn btn-danger btn-sm" type="submit">
+                  <%- include('../partials/icon', { name: 'trash' }) %> Hapus Tujuan
+                </button>
+              </form>
+            </div>
+          </details>
+        <% }); %>
+      </div>
+    <% } %>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Tambah Tujuan</h2></div>
+    <div class="card-body">
+      <form method="post" action="/destinations">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="field">
+          <label for="name">Nama</label>
+          <input id="name" name="name" type="text" placeholder="YouTube Channel Utama" required>
+        </div>
+        <div class="field">
+          <label for="platform">Platform</label>
+          <select id="platform" name="platform" data-platform-select="rtmp_url">
+            <% Object.entries(platforms).forEach(function ([key, p]) { %>
+              <option value="<%= key %>" data-rtmp="<%= p.rtmp %>"><%= p.label %></option>
+            <% }); %>
+          </select>
+          <div class="hint">URL RTMP akan terisi otomatis untuk platform yang sudah dikenal.</div>
+        </div>
+        <div class="field">
+          <label for="rtmp_url">URL RTMP</label>
+          <input id="rtmp_url" name="rtmp_url" type="text" value="<%= platforms.youtube.rtmp %>" required>
+        </div>
+        <div class="field">
+          <label for="stream_key">Stream Key</label>
+          <input id="stream_key" name="stream_key" type="password" required autocomplete="off"
+                 placeholder="xxxx-xxxx-xxxx-xxxx">
+          <div class="hint">Jangan bagikan ini ke siapa pun. Siapa pun yang punya key bisa menyiarkan ke channel kamu.</div>
+        </div>
+        <input type="hidden" name="active" value="1">
+        <button class="btn btn-primary btn-block" type="submit">
+          <%- include('../partials/icon', { name: 'plus' }) %> Tambah Tujuan
+        </button>
+      </form>
+    </div>
+    <div class="card-foot" style="display:block">
+      <div class="text-xs text-mute" style="line-height:1.6">
+        <strong style="color:var(--text-dim)">Catatan rotasi metadata:</strong>
+        rotasi judul/thumbnail/deskripsi/tags berjalan lewat YouTube Data API dan
+        tidak bergantung pada tujuan RTMP ini. Hubungkan channel di
+        <a href="/accounts">halaman Akun</a>.
+      </div>
+    </div>
+  </div>
+</div>

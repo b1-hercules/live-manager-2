@@ -1,0 +1,537 @@
+<% layout('layouts/main') %>
+
+<div class="flex items-center gap-1 wrap mb-2">
+  <span class="badge badge-<%= profile.mode === 'independent' ? 'info' : 'accent' %>">
+    <%= profile.mode === 'independent' ? 'INDEPENDENT' : 'BUNDLE' %>
+  </span>
+  <% if (!profile.active) { %><span class="badge badge-warn">NONAKTIF</span><% } %>
+  <span class="text-sm text-mute"><%= profile.description || '' %></span>
+  <div class="flex gap-1" style="margin-left:auto">
+    <a href="/rotations/<%= profile.id %>/logs" class="btn btn-sm">
+      <%- include('../partials/icon', { name: 'history' }) %> Riwayat
+    </a>
+    <form method="post" action="/rotations/<%= profile.id %>/delete"
+          data-confirm="Hapus profil &quot;<%= profile.name %>&quot; beserta seluruh varian dan thumbnail-nya?">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="btn btn-danger btn-sm" type="submit"><%- include('../partials/icon', { name: 'trash' }) %></button>
+    </form>
+  </div>
+</div>
+
+<% if (quota.dailyCost > quota.limit) { %>
+  <div class="alert alert-error">
+    <span class="alert-icon"><%- include('../partials/icon', { name: 'alert' }) %></span>
+    <div>
+      <strong>Interval terlalu rapat untuk kuota harian.</strong>
+      Dengan pengaturan sekarang, satu stream memakai <strong><%= quota.dailyCost.toLocaleString('id-ID') %> unit/hari</strong>
+      sementara jatah default hanya <%= quota.limit.toLocaleString('id-ID') %> unit.
+      Rotasi akan berhenti di tengah hari. Perbesar interval, atau matikan rotasi thumbnail
+      (yang memakan 50 dari <%= quota.costPerRotation %> unit per putaran).
+    </div>
+  </div>
+<% } %>
+
+<div class="tabs">
+  <button class="tab <%= profile.mode === 'bundle' ? 'active' : '' %>" data-tab="tabBundle">
+    Varian Bundle <span class="badge badge-muted"><%= items.length %></span>
+  </button>
+  <button class="tab <%= profile.mode === 'independent' ? 'active' : '' %>" data-tab="tabIndependent">
+    Field Independent
+  </button>
+  <button class="tab" data-tab="tabSettings">Pengaturan</button>
+  <button class="tab" data-tab="tabStats">Statistik</button>
+</div>
+
+<!-- ================================================== BUNDLE ================ -->
+<div id="tabBundle" <%= profile.mode === 'bundle' ? '' : 'hidden' %>>
+  <% if (profile.mode !== 'bundle') { %>
+    <div class="alert alert-info">
+      <span class="alert-icon"><%- include('../partials/icon', { name: 'info' }) %></span>
+      <div>Profil ini sedang memakai mode <strong>Independent</strong>. Varian di bawah tersimpan tapi tidak dipakai sampai kamu mengganti mode-nya kembali ke Bundle.</div>
+    </div>
+  <% } %>
+
+  <div class="grid grid-main">
+    <div class="card">
+      <div class="card-head">
+        <h2>Varian Metadata</h2>
+        <span class="sub">diterapkan berurutan sesuai mode <strong><%= profile.order_mode %></strong></span>
+      </div>
+
+      <% if (!items.length) { %>
+        <div class="empty">
+          <div class="empty-icon"><%- include('../partials/icon', { name: 'text' }) %></div>
+          <h3>Belum ada varian</h3>
+          <p>Tambahkan varian pertama lewat form di sebelah kanan, atau tempel banyak judul sekaligus dengan mode massal.</p>
+        </div>
+      <% } else { %>
+        <div class="card-body tight">
+          <% items.forEach(function (item, i) { %>
+            <div class="item-row <%= item.active ? '' : 'inactive' %>">
+              <span class="idx"><%= i + 1 %></span>
+              <% if (item.thumbnail_path) { %>
+                <img class="thumb thumb-md" src="<%= mediaUrl(item.thumbnail_path) %>" alt="" loading="lazy">
+              <% } else { %>
+                <div class="thumb thumb-md thumb-ph">no img</div>
+              <% } %>
+              <div class="body">
+                <div class="t"><%= item.title || item.label || '(tanpa judul)' %></div>
+                <% if (item.description) { %><div class="d"><%= item.description %></div><% } %>
+                <% if (item.tagList.length) { %>
+                  <div class="mt-1">
+                    <% item.tagList.slice(0, 8).forEach(function (t) { %><span class="tag-chip"><%= t %></span><% }); %>
+                    <% if (item.tagList.length > 8) { %><span class="tag-chip">+<%= item.tagList.length - 8 %></span><% } %>
+                  </div>
+                <% } %>
+                <div class="text-xs text-mute mt-1">
+                  dipakai <%= item.times_applied %>×
+                  <% if (item.last_applied_at) { %> · terakhir <%= new Date(item.last_applied_at).toLocaleString('id-ID', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }) %><% } %>
+                  <% if (item.weight > 1) { %> · bobot <%= item.weight %><% } %>
+                </div>
+
+                <details class="collapse mt-1">
+                  <summary style="padding:7px 11px;font-size:12px">Ubah varian</summary>
+                  <div class="collapse-body">
+                    <form method="post" action="/rotations/<%= profile.id %>/items/<%= item.id %>" enctype="multipart/form-data">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <div class="field">
+                        <label>Label internal</label>
+                        <input type="text" name="label" value="<%= item.label || '' %>" maxlength="80" placeholder="Varian A — thumbnail merah">
+                      </div>
+                      <div class="field">
+                        <label>Judul <span id="cnt-<%= item.id %>" class="text-xs text-mute" style="float:right"></span></label>
+                        <input type="text" name="title" value="<%= item.title || '' %>" maxlength="100" data-counter="cnt-<%= item.id %>">
+                      </div>
+                      <div class="field">
+                        <label>Deskripsi</label>
+                        <textarea name="description" maxlength="5000" rows="4"><%= item.description || '' %></textarea>
+                      </div>
+                      <div class="field">
+                        <label>Tags <span class="text-mute">(pisahkan dengan koma atau baris baru)</span></label>
+                        <textarea name="tags" rows="2"><%= item.tagList.join(', ') %></textarea>
+                      </div>
+                      <div class="form-grid">
+                        <div class="field">
+                          <label>Ganti thumbnail</label>
+                          <input type="file" name="thumbnail" accept="image/jpeg,image/png,image/webp">
+                          <div class="hint">Maks 2 MB, rasio 16:9, minimal 1280×720.</div>
+                        </div>
+                        <div class="field">
+                          <label>Bobot (mode acak)</label>
+                          <input type="number" name="weight" value="<%= item.weight %>" min="1" max="100">
+                        </div>
+                      </div>
+                      <label class="check">
+                        <input type="checkbox" name="active" value="1" <%= item.active ? 'checked' : '' %>>
+                        <div class="check-body"><div class="check-title">Aktif</div></div>
+                      </label>
+                      <button class="btn btn-primary btn-sm" type="submit">Simpan Varian</button>
+                    </form>
+                  </div>
+                </details>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">
+                <form method="post" action="/rotations/<%= profile.id %>/items/<%= item.id %>/toggle">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <button class="btn btn-sm btn-ghost" type="submit" title="<%= item.active ? 'Nonaktifkan' : 'Aktifkan' %>">
+                    <%- include('../partials/icon', { name: item.active ? 'check' : 'x' }) %>
+                  </button>
+                </form>
+                <% if (item.thumbnail_path) { %>
+                  <form method="post" action="/rotations/<%= profile.id %>/items/<%= item.id %>/thumbnail/clear"
+                        data-confirm="Hapus thumbnail varian ini?">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button class="btn btn-sm btn-ghost" type="submit" title="Hapus thumbnail">
+                      <%- include('../partials/icon', { name: 'image' }) %>
+                    </button>
+                  </form>
+                <% } %>
+                <form method="post" action="/rotations/<%= profile.id %>/items/<%= item.id %>/delete"
+                      data-confirm="Hapus varian ini?">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <button class="btn btn-sm btn-danger" type="submit" title="Hapus varian">
+                    <%- include('../partials/icon', { name: 'trash' }) %>
+                  </button>
+                </form>
+              </div>
+            </div>
+          <% }); %>
+        </div>
+      <% } %>
+    </div>
+
+    <div>
+      <div class="card">
+        <div class="card-head"><h2>Tambah Varian</h2></div>
+        <div class="card-body">
+          <form method="post" action="/rotations/<%= profile.id %>/items" enctype="multipart/form-data">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <div class="field">
+              <label for="new_label">Label internal <span class="text-mute">(opsional)</span></label>
+              <input id="new_label" name="label" type="text" maxlength="80" placeholder="Varian A">
+            </div>
+            <div class="field">
+              <label for="new_title">Judul <span id="cntNew" class="text-xs text-mute" style="float:right"></span></label>
+              <input id="new_title" name="title" type="text" maxlength="100" data-counter="cntNew"
+                     placeholder="🔴 LIVE Lofi Hip Hop — Belajar &amp; Fokus {{jam}} WIB">
+            </div>
+            <div class="field">
+              <label for="new_description">Deskripsi</label>
+              <textarea id="new_description" name="description" rows="4" maxlength="5000"
+                        placeholder="Musik lofi 24/7 untuk menemani belajar dan kerja."></textarea>
+            </div>
+            <div class="field">
+              <label for="new_tags">Tags</label>
+              <textarea id="new_tags" name="tags" rows="2" placeholder="lofi, study music, live 24/7"></textarea>
+              <div class="hint">Total maksimal 500 karakter (batas YouTube). Kelebihannya dipotong dari belakang.</div>
+            </div>
+            <div class="field">
+              <label for="new_thumb">Thumbnail</label>
+              <input id="new_thumb" name="thumbnail" type="file" accept="image/jpeg,image/png,image/webp">
+            </div>
+            <button class="btn btn-primary btn-block" type="submit">
+              <%- include('../partials/icon', { name: 'plus' }) %> Tambah Varian
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Tambah Massal</h2></div>
+        <div class="card-body">
+          <form method="post" action="/rotations/<%= profile.id %>/items/bulk" class="mb-2">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <div class="field">
+              <label for="bulk_titles">Judul (satu per baris)</label>
+              <textarea id="bulk_titles" name="titles" rows="6"
+                        placeholder="Judul varian 1&#10;Judul varian 2&#10;Judul varian 3"></textarea>
+              <div class="hint">Maksimal 100 baris sekali kirim.</div>
+            </div>
+            <div class="field">
+              <label for="shared_description">Deskripsi yang sama untuk semua <span class="text-mute">(opsional)</span></label>
+              <textarea id="shared_description" name="shared_description" rows="2"></textarea>
+            </div>
+            <div class="field">
+              <label for="shared_tags">Tags yang sama untuk semua <span class="text-mute">(opsional)</span></label>
+              <input id="shared_tags" name="shared_tags" type="text" placeholder="lofi, study, 24/7">
+            </div>
+            <button class="btn btn-block btn-sm" type="submit">Buat Varian dari Daftar</button>
+          </form>
+
+          <hr>
+
+          <form method="post" action="/rotations/<%= profile.id %>/items/bulk-thumbnails" enctype="multipart/form-data">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <div class="field">
+              <label for="bulk_thumbs">Banyak thumbnail sekaligus</label>
+              <input id="bulk_thumbs" name="thumbnails" type="file" multiple accept="image/jpeg,image/png,image/webp">
+              <div class="hint">Setiap gambar menjadi satu varian baru; nama file dipakai sebagai label.</div>
+            </div>
+            <button class="btn btn-block btn-sm" type="submit">Unggah Semua</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Placeholder</h2></div>
+        <div class="card-body">
+          <p class="text-sm text-mute mb-2">
+            Bisa dipakai di judul dan deskripsi. Nilainya dihitung ulang setiap kali rotasi berjalan.
+          </p>
+          <dl class="kv">
+            <% placeholders.forEach(function (p) { %>
+              <dt class="mono text-xs"><%= p.token %></dt>
+              <dd class="text-xs text-mute" style="text-align:left"><%= p.desc %></dd>
+            <% }); %>
+          </dl>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================== INDEPENDENT ============== -->
+<div id="tabIndependent" <%= profile.mode === 'independent' ? '' : 'hidden' %>>
+  <% if (profile.mode !== 'independent') { %>
+    <div class="alert alert-info">
+      <span class="alert-icon"><%- include('../partials/icon', { name: 'info' }) %></span>
+      <div>Profil ini sedang memakai mode <strong>Bundle</strong>. Pengaturan field di bawah baru dipakai setelah mode diganti ke Independent di tab Pengaturan.</div>
+    </div>
+  <% } %>
+
+  <div class="grid grid-2">
+    <% fields.forEach(function (f) { %>
+      <div class="card">
+        <div class="card-head">
+          <h2><%- include('../partials/icon', { name: f.field === 'thumbnail' ? 'image' : f.field === 'tags' ? 'tag' : 'text' }) %> <%= f.label %></h2>
+          <span class="badge badge-<%= f.enabled ? 'ok' : 'muted' %>"><%= f.enabled ? 'aktif' : 'mati' %></span>
+          <span class="badge badge-muted"><%= f.values.filter(v => v.active).length %> nilai</span>
+        </div>
+        <div class="card-body">
+          <form method="post" action="/rotations/<%= profile.id %>/fields/<%= f.field %>" class="mb-2">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <div class="form-grid">
+              <div class="field">
+                <label>Interval (menit)</label>
+                <input type="number" name="interval_minutes" value="<%= f.interval_minutes %>" min="5" max="10080">
+              </div>
+              <div class="field">
+                <label>Urutan</label>
+                <select name="order_mode">
+                  <option value="sequential" <%= f.order_mode === 'sequential' ? 'selected' : '' %>>Berurutan</option>
+                  <option value="shuffle" <%= f.order_mode === 'shuffle' ? 'selected' : '' %>>Acak tanpa ulang</option>
+                  <option value="random" <%= f.order_mode === 'random' ? 'selected' : '' %>>Acak berbobot</option>
+                </select>
+              </div>
+            </div>
+            <label class="check">
+              <input type="checkbox" name="enabled" value="1" <%= f.enabled ? 'checked' : '' %>>
+              <div class="check-body">
+                <div class="check-title">Rotasikan field ini</div>
+                <div class="check-desc">
+                  <% if (f.field === 'thumbnail') { %>
+                    50 unit kuota per pergantian.
+                  <% } else { %>
+                    51 unit per pergantian, atau digabung gratis bila jatuh tempo bersama field teks lain.
+                  <% } %>
+                </div>
+              </div>
+            </label>
+            <button class="btn btn-sm btn-primary" type="submit">Simpan Pengaturan</button>
+          </form>
+
+          <hr>
+
+          <form method="post" action="/rotations/<%= profile.id %>/fields/<%= f.field %>/values" enctype="multipart/form-data">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <% if (f.field === 'thumbnail') { %>
+              <div class="field">
+                <label>Tambah gambar</label>
+                <input type="file" name="thumbnails" multiple accept="image/jpeg,image/png,image/webp">
+              </div>
+            <% } else { %>
+              <div class="field">
+                <label>
+                  Tambah nilai
+                  <span class="text-mute">
+                    <%= f.field === 'description' ? '(pisahkan antar deskripsi dengan baris berisi ---)' : '(satu per baris)' %>
+                  </span>
+                </label>
+                <textarea name="values" rows="<%= f.field === 'description' ? 5 : 4 %>"
+                          placeholder="<%= f.field === 'title' ? 'Judul A\nJudul B' : f.field === 'tags' ? 'lofi, study, chill\nmusik, fokus, 24 jam' : 'Deskripsi pertama\n---\nDeskripsi kedua' %>"></textarea>
+                <% if (f.field === 'tags') { %>
+                  <div class="hint">Satu baris = satu set tags lengkap yang akan dipasang bersamaan.</div>
+                <% } %>
+              </div>
+            <% } %>
+            <button class="btn btn-sm btn-block" type="submit">Tambahkan</button>
+          </form>
+
+          <% if (f.values.length) { %>
+            <div class="divider-label">Daftar nilai</div>
+            <div style="max-height:280px;overflow-y:auto;margin:0 -16px">
+              <% f.values.forEach(function (v, i) { %>
+                <div class="item-row <%= v.active ? '' : 'inactive' %>" style="padding:9px 16px">
+                  <span class="idx"><%= i + 1 %></span>
+                  <div class="body">
+                    <% if (f.field === 'thumbnail' && v.thumbnail_path) { %>
+                      <img class="thumb thumb-md" src="<%= mediaUrl(v.thumbnail_path) %>" alt="" loading="lazy">
+                      <div class="text-xs text-mute mt-1"><%= v.value || '' %></div>
+                    <% } else { %>
+                      <div class="d" style="-webkit-line-clamp:3"><%= v.value %></div>
+                    <% } %>
+                    <div class="text-xs text-mute mt-1">dipakai <%= v.times_applied %>×</div>
+                  </div>
+                  <div style="display:flex;gap:4px">
+                    <form method="post" action="/rotations/<%= profile.id %>/values/<%= v.id %>/toggle">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <button class="btn btn-sm btn-ghost" type="submit" title="<%= v.active ? 'Nonaktifkan' : 'Aktifkan' %>">
+                        <%- include('../partials/icon', { name: v.active ? 'check' : 'x' }) %>
+                      </button>
+                    </form>
+                    <form method="post" action="/rotations/<%= profile.id %>/values/<%= v.id %>/delete" data-confirm="Hapus nilai ini?">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <button class="btn btn-sm btn-ghost" type="submit" title="Hapus">
+                        <%- include('../partials/icon', { name: 'trash' }) %>
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              <% }); %>
+            </div>
+          <% } %>
+        </div>
+      </div>
+    <% }); %>
+  </div>
+</div>
+
+<!-- ============================================== PENGATURAN =============== -->
+<div id="tabSettings" hidden>
+  <div class="grid grid-main">
+    <div class="card">
+      <div class="card-head"><h2>Pengaturan Profil</h2></div>
+      <div class="card-body">
+        <form method="post" action="/rotations/<%= profile.id %>">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="form-grid">
+            <div class="field span-2">
+              <label for="p_name">Nama</label>
+              <input id="p_name" name="name" type="text" value="<%= profile.name %>" required>
+            </div>
+            <div class="field span-2">
+              <label for="p_description">Deskripsi</label>
+              <input id="p_description" name="description" type="text" value="<%= profile.description || '' %>">
+            </div>
+            <div class="field">
+              <label for="p_mode">Mode</label>
+              <select id="p_mode" name="mode">
+                <option value="bundle" <%= profile.mode === 'bundle' ? 'selected' : '' %>>Bundle</option>
+                <option value="independent" <%= profile.mode === 'independent' ? 'selected' : '' %>>Independent</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="p_interval">Interval bundle (menit)</label>
+              <input id="p_interval" name="interval_minutes" type="number" min="5" max="10080" value="<%= profile.interval_minutes %>">
+            </div>
+            <div class="field">
+              <label for="p_order">Urutan bundle</label>
+              <select id="p_order" name="order_mode">
+                <option value="sequential" <%= profile.order_mode === 'sequential' ? 'selected' : '' %>>Berurutan</option>
+                <option value="shuffle" <%= profile.order_mode === 'shuffle' ? 'selected' : '' %>>Acak tanpa ulang</option>
+                <option value="random" <%= profile.order_mode === 'random' ? 'selected' : '' %>>Acak berbobot</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="p_jitter">Jitter (detik)</label>
+              <input id="p_jitter" name="jitter_seconds" type="number" min="0" max="3600" value="<%= profile.jitter_seconds %>">
+              <div class="hint">Menggeser waktu rotasi secara acak ±nilai ini, supaya beberapa stream tidak menabrak API bersamaan.</div>
+            </div>
+          </div>
+
+          <div class="divider-label">Field yang ikut dirotasi (mode bundle)</div>
+          <label class="check">
+            <input type="checkbox" name="apply_title" value="1" <%= profile.apply_title ? 'checked' : '' %>>
+            <div class="check-body"><div class="check-title">Judul</div><div class="check-desc">Maks 100 karakter.</div></div>
+          </label>
+          <label class="check">
+            <input type="checkbox" name="apply_description" value="1" <%= profile.apply_description ? 'checked' : '' %>>
+            <div class="check-body"><div class="check-title">Deskripsi</div><div class="check-desc">Maks 5.000 karakter.</div></div>
+          </label>
+          <label class="check">
+            <input type="checkbox" name="apply_tags" value="1" <%= profile.apply_tags ? 'checked' : '' %>>
+            <div class="check-body"><div class="check-title">Tags</div><div class="check-desc">Total maks 500 karakter.</div></div>
+          </label>
+          <label class="check">
+            <input type="checkbox" name="apply_thumbnail" value="1" <%= profile.apply_thumbnail ? 'checked' : '' %>>
+            <div class="check-body">
+              <div class="check-title">Thumbnail</div>
+              <div class="check-desc">Butuh channel terverifikasi. Memakan 50 unit kuota terpisah tiap rotasi.</div>
+            </div>
+          </label>
+
+          <div class="divider-label">Lain-lain</div>
+          <label class="check">
+            <input type="checkbox" name="stop_on_quota" value="1" <%= profile.stop_on_quota ? 'checked' : '' %>>
+            <div class="check-body">
+              <div class="check-title">Tunda rotasi kalau kuota menipis</div>
+              <div class="check-desc">Sangat disarankan. Tanpa ini, API akan menolak dan siaran penuh log error.</div>
+            </div>
+          </label>
+          <label class="check">
+            <input type="checkbox" name="active" value="1" <%= profile.active ? 'checked' : '' %>>
+            <div class="check-body">
+              <div class="check-title">Profil aktif</div>
+              <div class="check-desc">Menonaktifkan ini menghentikan rotasi di semua stream yang memakainya.</div>
+            </div>
+          </label>
+
+          <button class="btn btn-primary mt-1" type="submit">Simpan Pengaturan</button>
+        </form>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <div class="card-head"><h2>Perkiraan Kuota</h2></div>
+        <div class="card-body">
+          <dl class="kv">
+            <dt>Per rotasi</dt><dd><strong><%= quota.costPerRotation %></strong> unit</dd>
+            <dt>Rotasi / hari</dt><dd><%= quota.rotationsPerDay %>×</dd>
+            <dt>Total / hari</dt>
+            <dd style="color: <%= quota.dailyCost > quota.limit ? 'var(--live)' : quota.dailyCost > quota.limit * 0.8 ? 'var(--warn)' : 'var(--ok)' %>">
+              <strong><%= quota.dailyCost.toLocaleString('id-ID') %></strong> / <%= quota.limit.toLocaleString('id-ID') %>
+            </dd>
+          </dl>
+          <div class="meter mt-2 <%= quota.dailyCost > quota.limit ? 'danger' : quota.dailyCost > quota.limit * 0.8 ? 'warn' : 'ok' %>">
+            <span style="width: <%= Math.min(100, Math.round(quota.dailyCost / quota.limit * 100)) %>%"></span>
+          </div>
+          <div class="hint mt-1">
+            Angka ini untuk <strong>satu</strong> stream. Kalau profil dipakai beberapa stream sekaligus
+            pada channel yang sama, kalikan sesuai jumlahnya.
+          </div>
+        </div>
+      </div>
+
+      <% if (streams.length) { %>
+        <div class="card">
+          <div class="card-head"><h2>Dipakai Oleh</h2></div>
+          <div class="card-body tight">
+            <% streams.forEach(function (s) { %>
+              <div class="item-row" style="padding:11px 14px">
+                <span class="badge badge-<%= s.status === 'live' ? 'live' : 'muted' %>"><%= s.status %></span>
+                <div class="body">
+                  <div class="t" style="font-size:12.5px"><a href="/streams/<%= s.id %>"><%= s.title %></a></div>
+                  <div class="text-xs text-mute">rotasi <%= s.rotation_enabled ? 'aktif' : 'mati' %></div>
+                </div>
+              </div>
+            <% }); %>
+          </div>
+        </div>
+      <% } %>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================== STATISTIK =============== -->
+<div id="tabStats" hidden>
+  <div class="card">
+    <div class="card-head">
+      <h2>Pemakaian Varian</h2>
+      <span class="sub">berguna untuk melihat varian mana yang sudah cukup diuji</span>
+    </div>
+    <% if (!stats.length) { %>
+      <div class="empty"><p class="mb-0">Belum ada varian.</p></div>
+    <% } else { %>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Varian</th><th class="num">Bobot</th><th class="num">Dipakai</th><th class="num">Sukses</th><th class="num">Error</th><th>Terakhir</th><th>Status</th></tr>
+          </thead>
+          <tbody>
+            <% stats.forEach(function (s, i) { %>
+              <tr>
+                <td class="num"><%= i + 1 %></td>
+                <td class="truncate" style="max-width:280px"><%= s.label || s.title || '(tanpa judul)' %></td>
+                <td class="num"><%= s.weight %></td>
+                <td class="num"><%= s.times_applied %></td>
+                <td class="num" style="color:var(--ok)"><%= s.success_count %></td>
+                <td class="num" style="color:<%= s.error_count ? 'var(--live)' : 'inherit' %>"><%= s.error_count %></td>
+                <td class="text-xs text-mute"><%= s.last_applied_at ? new Date(s.last_applied_at).toLocaleString('id-ID', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }) : '—' %></td>
+                <td><span class="badge badge-<%= s.active ? 'ok' : 'muted' %>"><%= s.active ? 'aktif' : 'mati' %></span></td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+    <div class="card-foot">
+      <span class="text-xs text-mute">
+        LiveManager mencatat berapa kali tiap varian dipasang, bukan performanya di YouTube.
+        Untuk membandingkan CTR dan retensi antar varian, cocokkan waktu di kolom "Terakhir"
+        dengan grafik di YouTube Analytics.
+      </span>
+    </div>
+  </div>
+</div>

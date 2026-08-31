@@ -1,0 +1,231 @@
+<% layout('layouts/main') %>
+
+<% if (!ffmpegStatus.ok) { %>
+  <div class="alert alert-error">
+    <span class="alert-icon"><%- include('partials/icon', { name: 'alert' }) %></span>
+    <div>
+      <strong>FFmpeg tidak terdeteksi.</strong> Streaming tidak akan bisa dimulai.
+      Pasang FFmpeg lalu set <code>FFMPEG_PATH</code> di <code>.env</code>, atau
+      <a href="/settings">cek ulang di Pengaturan</a>.
+      <div class="text-xs text-mute mt-1"><%= ffmpegStatus.error || '' %></div>
+    </div>
+  </div>
+<% } %>
+
+<% if (checklistDone < checklist.length) { %>
+  <div class="card mb-2">
+    <div class="card-head">
+      <h2>Langkah Persiapan</h2>
+      <span class="badge badge-accent"><%= checklistDone %>/<%= checklist.length %> selesai</span>
+    </div>
+    <div class="card-body">
+      <div class="grid grid-3" style="gap:2px 22px">
+        <% checklist.forEach(function (c) { %>
+          <div class="checklist-item <%= c.done ? 'done' : '' %>">
+            <span class="mark"><%= c.done ? '✓' : '' %></span>
+            <% if (c.done) { %>
+              <span><%= c.label %></span>
+            <% } else { %>
+              <a href="<%= c.href %>"><%= c.label %></a>
+            <% } %>
+          </div>
+        <% }); %>
+      </div>
+    </div>
+  </div>
+<% } %>
+
+<div class="grid grid-4 mb-2">
+  <div class="stat <%= stats.live ? 'live' : '' %>">
+    <div class="stat-label">Sedang Live</div>
+    <div class="stat-value" id="statLive"><%= stats.live %></div>
+    <div class="stat-sub"><%= stats.scheduled %> terjadwal · <%= stats.total %> total</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Video</div>
+    <div class="stat-value"><%= videoCount %></div>
+    <div class="stat-sub"><%= formatBytes(storageUsed) %> terpakai</div>
+  </div>
+  <div class="stat accent">
+    <div class="stat-label">Profil Rotasi</div>
+    <div class="stat-value"><%= profileCount %></div>
+    <div class="stat-sub"><%= destinationCount %> tujuan RTMP</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">CPU / RAM</div>
+    <div class="stat-value sm" id="statSys"><%= system.cpu %>% · <%= system.memory.percent %>%</div>
+    <div class="meter mt-1 <%= system.memory.percent > 85 ? 'danger' : system.memory.percent > 65 ? 'warn' : 'ok' %>">
+      <span style="width: <%= system.memory.percent %>%"></span>
+    </div>
+    <div class="stat-sub"><%= system.cores %> core · <%= Math.round(system.memory.used / 1073741824 * 10) / 10 %> / <%= Math.round(system.memory.total / 1073741824 * 10) / 10 %> GB</div>
+  </div>
+</div>
+
+<div class="grid grid-main">
+  <div>
+    <div class="card">
+      <div class="card-head">
+        <h2>Siaran Aktif</h2>
+        <span class="sub">diperbarui otomatis tiap 10 detik</span>
+        <a href="/streams/new" class="btn btn-primary btn-sm">
+          <%- include('partials/icon', { name: 'plus' }) %> Stream Baru
+        </a>
+      </div>
+
+      <% if (!live.length) { %>
+        <div class="empty">
+          <div class="empty-icon"><%- include('partials/icon', { name: 'broadcast' }) %></div>
+          <h3>Belum ada siaran berjalan</h3>
+          <p>Buat stream, pilih video dan tujuan RTMP, lalu tekan Mulai.</p>
+          <a href="/streams" class="btn btn-sm">Lihat Semua Stream</a>
+        </div>
+      <% } else { %>
+        <div class="card-body tight">
+          <% live.forEach(function (s) { %>
+            <div class="item-row">
+              <% if (s.video_thumbnail) { %>
+                <img class="thumb thumb-md" src="<%= mediaUrl(s.video_thumbnail) %>" alt="">
+              <% } else { %>
+                <div class="thumb thumb-md thumb-ph">no img</div>
+              <% } %>
+              <div class="body">
+                <div class="flex items-center gap-1 mb-1 wrap">
+                  <span class="badge badge-live"><span class="dot dot-pulse"></span><%= s.status === 'live' ? 'LIVE' : 'MENYALA' %></span>
+                  <% if (s.rotation_enabled) { %>
+                    <span class="badge badge-accent">
+                      <%- include('partials/icon', { name: 'rotate' }) %> Rotasi <%= s.rotation_mode === 'independent' ? 'independent' : 'bundle' %>
+                    </span>
+                  <% } %>
+                  <span class="text-xs text-mute"><%= s.uptime %> · <%= s.destination_count %> tujuan</span>
+                </div>
+                <div class="t"><a href="/streams/<%= s.id %>"><%= s.title %></a></div>
+                <div class="d">
+                  <%= s.video_title || 'Tanpa video' %>
+                  <% if (s.runtime && s.runtime.stats.updatedAt) { %>
+                    · <span class="mono"><%= s.runtime.stats.fps %> fps · <%= s.runtime.stats.bitrate %> · speed <%= s.runtime.stats.speed %></span>
+                  <% } %>
+                </div>
+              </div>
+              <div class="nowrap">
+                <a href="/streams/<%= s.id %>" class="btn btn-sm">Kelola</a>
+              </div>
+            </div>
+          <% }); %>
+        </div>
+      <% } %>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Rotasi Terakhir</h2>
+        <a href="/rotation-history" class="btn btn-ghost btn-sm">Semua riwayat</a>
+      </div>
+      <% if (!rotationLogs.length) { %>
+        <div class="empty" style="padding:30px 20px">
+          <p class="mb-0">Belum ada rotasi metadata yang dijalankan.</p>
+        </div>
+      <% } else { %>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Waktu</th><th>Stream</th><th>Perubahan</th><th class="num">Kuota</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              <% rotationLogs.forEach(function (l) { %>
+                <tr>
+                  <td class="text-xs text-mute nowrap"><%= new Date(l.applied_at).toLocaleString('id-ID', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }) %></td>
+                  <td class="truncate" style="max-width:150px"><%= l.stream_title || '—' %></td>
+                  <td class="text-sm">
+                    <% if (l.payloadObj) { %>
+                      <% Object.keys(l.payloadObj).forEach(function (k) { %><span class="tag-chip"><%= k %></span><% }); %>
+                    <% } else { %>
+                      <span class="text-mute text-xs"><%= (l.message || '—').slice(0, 70) %></span>
+                    <% } %>
+                  </td>
+                  <td class="num"><%= l.quota_cost %></td>
+                  <td>
+                    <span class="badge badge-<%= l.status === 'success' ? 'ok' : l.status === 'error' ? 'live' : 'warn' %>"><%= l.status %></span>
+                  </td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card-head"><h2>Kuota YouTube API</h2></div>
+      <div class="card-body">
+        <% if (!accounts.length) { %>
+          <p class="text-sm text-mute mb-1">Belum ada channel yang terhubung.</p>
+          <a href="/accounts" class="btn btn-sm btn-block">Hubungkan Channel</a>
+        <% } else { %>
+          <% accounts.forEach(function (a) {
+               const pct = Math.min(100, Math.round(a.quota.used / a.quota.limit * 100));
+               const level = pct > 85 ? 'danger' : pct > 60 ? 'warn' : 'ok'; %>
+            <div class="mb-2">
+              <div class="flex items-center justify-between gap-1 mb-1">
+                <span class="text-sm truncate" style="font-weight:600"><%= a.name %></span>
+                <span class="badge badge-<%= a.status === 'connected' ? 'ok' : 'live' %>"><%= a.status %></span>
+              </div>
+              <div class="meter <%= level %>"><span style="width: <%= pct %>%"></span></div>
+              <div class="text-xs text-mute mt-1">
+                <%= a.quota.used.toLocaleString('id-ID') %> / <%= a.quota.limit.toLocaleString('id-ID') %> unit
+                · sisa <%= Math.floor(a.quota.remaining / 100) %> rotasi penuh
+              </div>
+            </div>
+          <% }); %>
+          <div class="hint">Kuota reset tiap hari pukul 00:00 Pacific Time (±14:00 WIB).</div>
+        <% } %>
+      </div>
+    </div>
+
+    <% if (scheduled.length) { %>
+      <div class="card">
+        <div class="card-head"><h2>Terjadwal</h2></div>
+        <div class="card-body tight">
+          <% scheduled.forEach(function (s) { %>
+            <div class="item-row">
+              <span class="idx"><%- include('partials/icon', { name: 'clock' }) %></span>
+              <div class="body">
+                <div class="t"><a href="/streams/<%= s.id %>"><%= s.title %></a></div>
+                <div class="d"><%= new Date(s.schedule_start_at).toLocaleString('id-ID') %></div>
+              </div>
+            </div>
+          <% }); %>
+        </div>
+      </div>
+    <% } %>
+
+    <div class="card">
+      <div class="card-head"><h2>Sistem</h2></div>
+      <div class="card-body">
+        <dl class="kv">
+          <dt>Platform</dt><dd class="text-sm"><%= system.platform %></dd>
+          <dt>Node</dt><dd class="mono text-sm"><%= system.nodeVersion %></dd>
+          <dt>FFmpeg</dt>
+          <dd class="text-sm">
+            <% if (ffmpegStatus.ok) { %>
+              <span class="badge badge-ok">terdeteksi</span>
+            <% } else { %>
+              <span class="badge badge-live">tidak ada</span>
+            <% } %>
+          </dd>
+          <dt>Uptime app</dt><dd class="mono text-sm"><%= Math.floor(system.uptimeSeconds / 3600) %>j <%= Math.floor(system.uptimeSeconds % 3600 / 60) %>m</dd>
+          <dt>Storage</dt><dd class="text-sm"><%= formatBytes(system.storageBytes) %></dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Polling ringan supaya angka di dashboard tetap hidup tanpa reload halaman.
+  LM.poll('/api/overview', 10000, function (data) {
+    document.getElementById('statLive').textContent = data.stats.live;
+    document.getElementById('statSys').textContent = data.system.cpu + '% · ' + data.system.memory.percent + '%';
+  });
+</script>

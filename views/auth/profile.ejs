@@ -1,0 +1,50 @@
+<% layout('layouts/main') %>
+<div class="grid grid-2">
+  <div class="card">
+    <div class="card-head"><h2>Identitas</h2></div>
+    <div class="card-body">
+      <form method="post" action="/profile">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="field">
+          <label for="display_name">Nama Tampilan</label>
+          <input id="display_name" name="display_name" type="text" value="<%= user.display_name || '' %>">
+        </div>
+        <div class="field">
+          <label for="username">Username</label>
+          <input id="username" name="username" type="text" value="<%= user.username %>" minlength="3" required>
+        </div>
+        <button class="btn btn-primary" type="submit">Simpan</button>
+      </form>
+    </div>
+    <div class="card-foot">
+      <span class="text-xs text-mute">
+        Bergabung <%= new Date(user.created_at).toLocaleDateString('id-ID') %>
+        <% if (user.last_login_at) { %>
+          · Login terakhir <%= new Date(user.last_login_at).toLocaleString('id-ID') %>
+        <% } %>
+      </span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Ganti Password</h2></div>
+    <div class="card-body">
+      <form method="post" action="/profile/password">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="field">
+          <label for="current">Password Saat Ini</label>
+          <input id="current" name="current" type="password" required autocomplete="current-password">
+        </div>
+        <div class="field">
+          <label for="password">Password Baru</label>
+          <input id="password" name="password" type="password" minlength="8" required autocomplete="new-password">
+        </div>
+        <div class="field">
+          <label for="confirm">Ulangi Password Baru</label>
+          <input id="confirm" name="confirm" type="password" minlength="8" required autocomplete="new-password">
+        </div>
+        <button class="btn btn-primary" type="submit">Ganti Password</button>
+      </form>
+    </div>
+  </div>
+</div>

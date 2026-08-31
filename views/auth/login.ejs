@@ -1,0 +1,32 @@
+<% layout('layouts/blank') %>
+<div class="card">
+  <div class="card-body">
+    <h2>Masuk</h2>
+    <p class="text-mute text-sm mb-2">Kelola siaran dan rotasi metadata kamu.</p>
+
+    <% if (error) { %>
+      <div class="alert alert-error">
+        <span class="alert-icon"><%- include('../partials/icon', { name: 'alert' }) %></span>
+        <div><%= error %></div>
+      </div>
+    <% } %>
+
+    <form method="post" action="/login">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" autocomplete="username" required autofocus>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn btn-primary btn-block" type="submit">Masuk</button>
+    </form>
+  </div>
+  <div class="card-foot">
+    <span class="text-xs text-mute">
+      Lupa password? Jalankan <code>npm run reset-password</code> di server.
+    </span>
+  </div>
+</div>

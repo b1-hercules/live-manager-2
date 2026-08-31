@@ -1,0 +1,20 @@
+services:
+  livemanager:
+    build: .
+    container_name: livemanager
+    restart: unless-stopped
+    ports:
+      - "7575:7575"
+    environment:
+      # APP_URL wajib cocok dengan alamat yang kamu pakai di browser,
+      # karena dipakai untuk redirect URI OAuth Google.
+      APP_URL: ${APP_URL:-http://localhost:7575}
+      SESSION_SECRET: ${SESSION_SECRET:?jalankan npm run generate-secret lalu isi di .env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?jalankan npm run generate-secret lalu isi di .env}
+      TZ: ${TZ:-Asia/Jakarta}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-4096}
+    volumes:
+      # Video, thumbnail, dan database harus bertahan melewati rebuild image.
+      - ./storage:/app/storage
+      - ./db:/app/db
+      - ./logs:/app/logs

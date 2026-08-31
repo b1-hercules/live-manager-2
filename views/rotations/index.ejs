@@ -1,0 +1,121 @@
+<% layout('layouts/main') %>
+
+<p class="page-intro">
+  Profil rotasi berisi kumpulan varian metadata yang akan dipasang bergantian ke siaran YouTube
+  yang sedang berjalan. Gunakan ini untuk menguji judul dan thumbnail mana yang paling menarik klik
+  tanpa harus menghentikan siaran.
+</p>
+
+<div class="grid grid-main">
+  <div class="card">
+    <div class="card-head">
+      <h2>Profil</h2>
+      <span class="badge badge-muted"><%= profiles.length %></span>
+    </div>
+
+    <% if (!profiles.length) { %>
+      <div class="empty">
+        <div class="empty-icon"><%- include('../partials/icon', { name: 'rotate' }) %></div>
+        <h3>Belum ada profil rotasi</h3>
+        <p>Buat profil pertama di sebelah kanan, lalu isi dengan varian judul, deskripsi, tags, dan thumbnail.</p>
+      </div>
+    <% } else { %>
+      <div class="card-body tight">
+        <% profiles.forEach(function (p) { %>
+          <div class="item-row">
+            <span class="idx"><%= p.mode === 'independent' ? 'IN' : 'BD' %></span>
+            <div class="body">
+              <div class="t"><a href="/rotations/<%= p.id %>"><%= p.name %></a></div>
+              <div class="d"><%= p.description || 'Tanpa deskripsi' %></div>
+              <div class="flex gap-1 wrap mt-1">
+                <span class="badge badge-muted"><%= p.mode === 'independent' ? 'Independent' : 'Bundle' %></span>
+                <span class="badge badge-muted"><%= p.interval_minutes %> menit</span>
+                <span class="badge badge-muted"><%= p.order_mode %></span>
+                <span class="badge badge-accent"><%= p.item_count %> varian aktif</span>
+                <% if (p.stream_count) { %><span class="badge badge-info"><%= p.stream_count %> stream</span><% } %>
+                <% if (!p.active) { %><span class="badge badge-warn">nonaktif</span><% } %>
+              </div>
+              <div class="flex gap-1 mt-1">
+                <% if (p.apply_title) { %><span class="tag-chip">judul</span><% } %>
+                <% if (p.apply_description) { %><span class="tag-chip">deskripsi</span><% } %>
+                <% if (p.apply_tags) { %><span class="tag-chip">tags</span><% } %>
+                <% if (p.apply_thumbnail) { %><span class="tag-chip">thumbnail</span><% } %>
+              </div>
+            </div>
+            <div class="nowrap">
+              <a href="/rotations/<%= p.id %>" class="btn btn-sm">Kelola</a>
+            </div>
+          </div>
+        <% }); %>
+      </div>
+    <% } %>
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card-head"><h2>Profil Baru</h2></div>
+      <div class="card-body">
+        <form method="post" action="/rotations">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="field">
+            <label for="name">Nama Profil</label>
+            <input id="name" name="name" type="text" placeholder="A/B Test Thumbnail Lofi" required>
+          </div>
+          <div class="field">
+            <label for="description">Deskripsi <span class="text-mute">(opsional)</span></label>
+            <input id="description" name="description" type="text" placeholder="Uji 10 judul untuk stream musik malam">
+          </div>
+          <div class="field">
+            <label for="mode">Mode Rotasi</label>
+            <select id="mode" name="mode" data-toggles="bundleInterval" data-toggles-value="bundle">
+              <option value="bundle">Bundle — satu paket lengkap sekaligus</option>
+              <option value="independent">Independent — tiap field jadwal sendiri</option>
+            </select>
+          </div>
+          <div id="bundleInterval">
+            <div class="form-grid">
+              <div class="field">
+                <label for="interval_minutes">Interval (menit)</label>
+                <input id="interval_minutes" name="interval_minutes" type="number" min="5" max="10080" value="60">
+              </div>
+              <div class="field">
+                <label for="order_mode">Urutan</label>
+                <select id="order_mode" name="order_mode">
+                  <option value="sequential">Berurutan</option>
+                  <option value="shuffle">Acak tanpa ulang</option>
+                  <option value="random">Acak berbobot</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <button class="btn btn-primary btn-block" type="submit">
+            <%- include('../partials/icon', { name: 'plus' }) %> Buat Profil
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Bundle vs Independent</h2></div>
+      <div class="card-body">
+        <div class="text-sm text-dim" style="line-height:1.7">
+          <p>
+            <strong style="color:var(--accent)">Bundle</strong> — satu varian berisi judul, deskripsi,
+            tags, dan thumbnail sekaligus. Ketiga-empatnya berganti bersamaan setiap interval.
+            Pilih ini kalau kamu ingin tahu <em>kombinasi</em> mana yang menang, karena setiap perubahan
+            bisa diatribusikan ke satu varian utuh.
+          </p>
+          <p>
+            <strong style="color:var(--accent)">Independent</strong> — tiap field punya daftar dan
+            interval sendiri: 10 judul berganti tiap 30 menit, 5 thumbnail tiap 2 jam. Menghasilkan
+            jauh lebih banyak kombinasi, tapi sulit menyimpulkan elemen mana yang berpengaruh.
+          </p>
+          <p class="mb-0">
+            Mode bisa diganti kapan saja; data varian bundle dan nilai independent disimpan terpisah,
+            jadi tidak ada yang hilang saat berpindah mode.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

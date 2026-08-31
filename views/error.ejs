@@ -1,0 +1,14 @@
+<% layout('layouts/blank') %>
+<div class="card">
+  <div class="card-body" style="text-align:center">
+    <div class="stat-value" style="font-size:44px;color:var(--live)"><%= status %></div>
+    <h2 class="mt-1"><%= title %></h2>
+    <p class="text-dim mt-1"><%= message %></p>
+    <a href="/" class="btn btn-primary mt-2">Kembali ke Dashboard</a>
+  </div>
+  <% if (stack) { %>
+    <div class="card-foot" style="display:block">
+      <pre class="cmd" style="max-height:220px;overflow:auto"><%= stack %></pre>
+    </div>
+  <% } %>
+</div>

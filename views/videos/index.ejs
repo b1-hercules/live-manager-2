@@ -1,0 +1,111 @@
+<% layout('layouts/main') %>
+
+<div class="card mb-2">
+  <div class="card-head">
+    <h2>Unggah Video</h2>
+    <span class="sub">maks <%= maxUploadMb %> MB · mp4, mkv, mov, flv, webm, ts</span>
+  </div>
+  <div class="card-body">
+    <form method="post" action="/videos/upload" enctype="multipart/form-data" id="uploadForm">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="form-grid">
+        <div class="field">
+          <label for="video">File Video</label>
+          <input id="video" name="video" type="file" accept="video/*,.mkv,.ts,.flv" required>
+        </div>
+        <div class="field">
+          <label for="title">Judul <span class="text-mute">(opsional)</span></label>
+          <input id="title" name="title" type="text" placeholder="Otomatis dari nama file">
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" type="submit" id="uploadBtn">
+          <%- include('../partials/icon', { name: 'upload' }) %> Unggah
+        </button>
+        <span class="text-xs text-mute" id="uploadNote">
+          Video akan diprobe dengan ffprobe dan dibuatkan thumbnail otomatis.
+        </span>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Galeri <span class="sub">· <%= videos.length %> video · <%= formatBytes(totalSize) %></span></h2>
+    <form method="get" action="/videos" class="flex gap-1">
+      <input type="search" name="q" value="<%= search %>" placeholder="Cari judul..." style="width:200px">
+      <button class="btn btn-sm" type="submit">Cari</button>
+      <% if (search) { %><a href="/videos" class="btn btn-ghost btn-sm">Reset</a><% } %>
+    </form>
+  </div>
+
+  <% if (!videos.length) { %>
+    <div class="empty">
+      <div class="empty-icon"><%- include('../partials/icon', { name: 'video' }) %></div>
+      <h3><%= search ? 'Tidak ada yang cocok' : 'Galeri masih kosong' %></h3>
+      <p><%= search ? 'Coba kata kunci lain.' : 'Unggah video pertama kamu di form di atas. Video inilah yang akan diputar berulang sebagai siaran live.' %></p>
+    </div>
+  <% } else { %>
+    <div class="card-body">
+      <div class="grid grid-4">
+        <% videos.forEach(function (v) { %>
+          <div class="video-card">
+            <% if (v.thumbnail_path) { %>
+              <img class="thumb thumb-lg" src="<%= mediaUrl(v.thumbnail_path) %>" alt="" loading="lazy">
+            <% } else { %>
+              <div class="thumb thumb-lg thumb-ph">tanpa thumbnail</div>
+            <% } %>
+            <div class="meta">
+              <h3 title="<%= v.title %>"><%= v.title %></h3>
+              <div class="specs">
+                <span><%= v.width %>×<%= v.height %></span>
+                <span><%= formatDuration(v.duration) %></span>
+                <span><%= formatBytes(v.filesize) %></span>
+              </div>
+              <div class="specs" style="padding-top:4px">
+                <span class="badge badge-muted"><%= (v.video_codec || '?').toUpperCase() %></span>
+                <% if (v.has_audio) { %>
+                  <span class="badge badge-muted"><%= (v.audio_codec || '?').toUpperCase() %></span>
+                <% } else { %>
+                  <span class="badge badge-warn">tanpa audio</span>
+                <% } %>
+                <% if (v.fps) { %><span class="badge badge-muted"><%= Math.round(v.fps) %>fps</span><% } %>
+              </div>
+            </div>
+            <div class="card-foot" style="padding:9px 12px">
+              <details class="collapse" style="flex:1;border:0;background:none">
+                <summary style="padding:0;font-size:12px">Ubah judul</summary>
+                <div class="collapse-body" style="padding:10px 0 0;border:0">
+                  <form method="post" action="/videos/<%= v.id %>/rename" class="flex gap-1">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <input type="text" name="title" value="<%= v.title %>" required>
+                    <button class="btn btn-sm btn-primary" type="submit">OK</button>
+                  </form>
+                </div>
+              </details>
+              <form method="post" action="/videos/<%= v.id %>/delete"
+                    data-confirm="Hapus &quot;<%= v.title %>&quot;? File di disk ikut terhapus permanen.">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <button class="btn btn-sm btn-danger" type="submit" title="Hapus video">
+                  <%- include('../partials/icon', { name: 'trash' }) %>
+                </button>
+              </form>
+            </div>
+          </div>
+        <% }); %>
+      </div>
+    </div>
+  <% } %>
+</div>
+
+<script>
+  // Upload video besar bisa lama; beri umpan balik supaya tidak diklik dua kali.
+  document.getElementById('uploadForm')?.addEventListener('submit', function () {
+    const btn = document.getElementById('uploadBtn');
+    btn.disabled = true;
+    btn.textContent = 'Mengunggah...';
+    document.getElementById('uploadNote').textContent =
+      'Jangan tutup halaman ini. File besar bisa memakan beberapa menit.';
+  });
+</script>

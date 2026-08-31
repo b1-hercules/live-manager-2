@@ -1,0 +1,52 @@
+<% layout('layouts/main') %>
+
+<div class="flex items-center gap-1 mb-2">
+  <a href="/rotations/<%= profile.id %>" class="btn btn-sm btn-ghost">← Kembali ke profil</a>
+  <span class="badge badge-<%= profile.mode === 'independent' ? 'info' : 'accent' %>"><%= profile.mode %></span>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Riwayat — <%= profile.name %></h2>
+    <span class="badge badge-muted"><%= logs.length %></span>
+  </div>
+
+  <% if (!logs.length) { %>
+    <div class="empty">
+      <div class="empty-icon"><%- include('../partials/icon', { name: 'history' }) %></div>
+      <h3>Profil ini belum pernah dijalankan</h3>
+      <p>Pasangkan profil ke sebuah stream, aktifkan rotasi, lalu mulai siaran.</p>
+    </div>
+  <% } else { %>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Waktu</th><th>Stream</th><th>Perubahan</th><th class="num">Kuota</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          <% logs.forEach(function (l) { %>
+            <tr>
+              <td class="text-xs text-mute nowrap"><%= new Date(l.applied_at).toLocaleString('id-ID') %></td>
+              <td class="truncate" style="max-width:150px"><%= l.stream_title || '—' %></td>
+              <td class="text-sm" style="max-width:460px">
+                <% if (l.payloadObj) { %>
+                  <% Object.entries(l.payloadObj).forEach(function ([k, v]) { %>
+                    <div class="truncate">
+                      <span class="text-mute text-xs"><%= k %>:</span>
+                      <%= Array.isArray(v) ? v.join(', ') : String(v).slice(0, 160) %>
+                    </div>
+                  <% }); %>
+                <% } %>
+                <% if (l.message) { %>
+                  <div class="text-xs" style="color:<%= l.status === 'error' ? 'var(--live)' : 'var(--text-mute)' %>"><%= l.message %></div>
+                <% } %>
+              </td>
+              <td class="num"><%= l.quota_cost %></td>
+              <td><span class="badge badge-<%= l.status === 'success' ? 'ok' : l.status === 'error' ? 'live' : 'warn' %>"><%= l.status %></span></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>

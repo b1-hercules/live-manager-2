@@ -1,0 +1,174 @@
+<% layout('layouts/main') %>
+
+<% if (encryptionDerived || sessionEphemeral) { %>
+  <div class="alert alert-warn">
+    <span class="alert-icon"><%- include('partials/icon', { name: 'alert' }) %></span>
+    <div>
+      <strong>Konfigurasi keamanan belum lengkap.</strong>
+      <ul>
+        <% if (sessionEphemeral) { %>
+          <li><code>SESSION_SECRET</code> belum diset — semua sesi login hilang setiap aplikasi restart.</li>
+        <% } %>
+        <% if (encryptionDerived) { %>
+          <li><code>ENCRYPTION_KEY</code> belum diset — kunci enkripsi token diturunkan dari session secret. Kalau session secret berubah, semua akun YouTube harus dihubungkan ulang.</li>
+        <% } %>
+      </ul>
+      Jalankan <code>npm run generate-secret</code>, salin hasilnya ke <code>.env</code>, lalu restart aplikasi.
+    </div>
+  </div>
+<% } %>
+
+<div class="grid grid-main">
+  <div>
+    <div class="card">
+      <div class="card-head">
+        <h2>Google OAuth</h2>
+        <span class="sub">untuk rotasi metadata YouTube</span>
+      </div>
+      <div class="card-body">
+        <div class="field">
+          <label>Authorized redirect URI</label>
+          <div class="copy-row">
+            <input type="text" value="<%= redirectUri %>" readonly>
+            <button class="btn btn-sm" data-copy="<%= redirectUri %>" data-copy-label="Redirect URI" type="button">
+              <%- include('partials/icon', { name: 'copy' }) %>
+            </button>
+          </div>
+          <div class="hint">
+            Daftarkan alamat ini persis seperti tertulis di Google Cloud Console.
+            Nilainya mengikuti <code>APP_URL</code> di <code>.env</code> (sekarang: <code><%= appUrl %></code>).
+            Kalau kamu akses lewat domain lain, ubah <code>APP_URL</code> dulu.
+          </div>
+        </div>
+
+        <hr>
+
+        <form method="post" action="/settings/google">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="field">
+            <label for="google_client_id">Client ID</label>
+            <input id="google_client_id" name="google_client_id" type="text"
+                   value="<%= appSettings.google_client_id || '' %>"
+                   placeholder="1234567890-abcdef.apps.googleusercontent.com"
+                   <%= envClientId ? 'disabled' : '' %>>
+            <% if (envClientId) { %>
+              <div class="hint">Diatur lewat variabel lingkungan <code>GOOGLE_CLIENT_ID</code> — nilai env selalu menang.</div>
+            <% } %>
+          </div>
+          <div class="field">
+            <label for="google_client_secret">Client Secret</label>
+            <input id="google_client_secret" name="google_client_secret" type="password" autocomplete="off"
+                   placeholder="<%= hasClientSecret ? '•••••••• (tersimpan, kosongkan bila tidak diganti)' : 'GOCSPX-...' %>"
+                   <%= envClientSecret ? 'disabled' : '' %>>
+            <div class="hint">
+              <% if (envClientSecret) { %>
+                Diatur lewat variabel lingkungan <code>GOOGLE_CLIENT_SECRET</code>.
+              <% } else { %>
+                Disimpan terenkripsi AES-256-GCM. Tidak pernah dikirim balik ke browser.
+              <% } %>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary" type="submit">Simpan Kredensial</button>
+            <% if (appSettings.google_client_id || hasClientSecret) { %>
+              <button class="btn btn-danger btn-sm" type="submit" formaction="/settings/google/clear"
+                      data-confirm-skip>Hapus</button>
+            <% } %>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Pengaturan Umum</h2></div>
+      <div class="card-body">
+        <form method="post" action="/settings/general">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="form-grid">
+            <div class="field">
+              <label for="default_rotation_interval">Interval rotasi default (menit)</label>
+              <input id="default_rotation_interval" name="default_rotation_interval" type="number" min="5" max="10080"
+                     value="<%= appSettings.default_rotation_interval %>">
+              <div class="hint">Nilai awal saat membuat profil rotasi baru.</div>
+            </div>
+            <div class="field">
+              <label for="quota_warn_threshold">Peringatan kuota (%)</label>
+              <input id="quota_warn_threshold" name="quota_warn_threshold" type="number" min="1" max="100"
+                     value="<%= appSettings.quota_warn_threshold %>">
+              <div class="hint">Meter kuota berubah warna setelah melewati angka ini.</div>
+            </div>
+            <div class="field span-2">
+              <label for="keep_rotation_logs_days">Simpan log rotasi (hari)</label>
+              <input id="keep_rotation_logs_days" name="keep_rotation_logs_days" type="number" min="1" max="365"
+                     value="<%= appSettings.keep_rotation_logs_days %>">
+              <div class="hint">Log lebih tua dari ini dihapus otomatis sekali sehari.</div>
+            </div>
+          </div>
+          <button class="btn btn-primary" type="submit">Simpan</button>
+        </form>
+
+        <hr>
+
+        <form method="post" action="/settings/logs/prune" class="flex gap-1 items-center"
+              data-confirm="Hapus log rotasi yang lebih lama dari jumlah hari tersebut?">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <label style="margin:0" class="text-sm">Bersihkan sekarang, lebih lama dari</label>
+          <input type="number" name="days" value="30" min="1" style="width:88px">
+          <span class="text-sm text-mute">hari</span>
+          <button class="btn btn-sm" type="submit">Bersihkan</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card-head"><h2>FFmpeg</h2></div>
+      <div class="card-body">
+        <% if (ffmpegStatus.ok) { %>
+          <div class="alert alert-success" style="margin:0">
+            <span class="alert-icon"><%- include('partials/icon', { name: 'check' }) %></span>
+            <div>
+              <strong>Terdeteksi</strong>
+              <div class="text-xs mono mt-1" style="opacity:.85"><%= ffmpegStatus.version %></div>
+              <div class="text-xs mono" style="opacity:.7"><%= ffmpegStatus.path %></div>
+            </div>
+          </div>
+        <% } else { %>
+          <div class="alert alert-error" style="margin:0">
+            <span class="alert-icon"><%- include('partials/icon', { name: 'alert' }) %></span>
+            <div>
+              <strong>Tidak ditemukan</strong>
+              <div class="text-xs mt-1"><%= ffmpegStatus.error || '' %></div>
+              <div class="text-xs mt-1">Set <code>FFMPEG_PATH</code> dan <code>FFPROBE_PATH</code> di <code>.env</code>.</div>
+            </div>
+          </div>
+        <% } %>
+        <form method="post" action="/settings/ffmpeg/check" class="mt-2">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn-block btn-sm" type="submit">
+            <%- include('partials/icon', { name: 'refresh' }) %> Cek Ulang
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Lingkungan</h2></div>
+      <div class="card-body">
+        <dl class="kv">
+          <dt>APP_URL</dt><dd class="mono text-xs"><%= appUrl %></dd>
+          <dt>Zona waktu</dt><dd class="mono text-xs"><%= timezone %></dd>
+          <dt>Session secret</dt>
+          <dd><span class="badge badge-<%= sessionEphemeral ? 'warn' : 'ok' %>"><%= sessionEphemeral ? 'sementara' : 'terpasang' %></span></dd>
+          <dt>Encryption key</dt>
+          <dd><span class="badge badge-<%= encryptionDerived ? 'warn' : 'ok' %>"><%= encryptionDerived ? 'diturunkan' : 'terpasang' %></span></dd>
+        </dl>
+        <div class="hint mt-2">
+          Zona waktu dipakai untuk placeholder <code>{{jam}}</code> dan <code>{{tanggal}}</code> di
+          varian rotasi. Ubah lewat <code>TZ</code> di <code>.env</code>.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

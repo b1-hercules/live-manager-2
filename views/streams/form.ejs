@@ -1,0 +1,312 @@
+<% layout('layouts/main') %>
+<%
+  const s = stream || {};
+  const isEdit = Boolean(stream);
+  const action = isEdit ? `/streams/${s.id}` : '/streams';
+  const val = (key, fallback) => (s[key] !== undefined && s[key] !== null ? s[key] : fallback);
+%>
+
+<form method="post" action="<%= action %>">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+
+  <div class="grid grid-main">
+    <div>
+      <!-- ----------------------------------------------------- dasar -->
+      <div class="card">
+        <div class="card-head"><h2>Sumber &amp; Tujuan</h2></div>
+        <div class="card-body">
+          <div class="field">
+            <label for="title">Nama Stream</label>
+            <input id="title" name="title" type="text" value="<%= val('title', '') %>"
+                   placeholder="Lofi 24/7 — Channel Utama" required maxlength="150">
+            <div class="hint">Nama internal untuk kamu sendiri. Judul yang tampil di YouTube diatur lewat profil rotasi.</div>
+          </div>
+
+          <div class="field">
+            <label for="video_id">Video Sumber</label>
+            <% if (!videos.length) { %>
+              <div class="alert alert-warn" style="margin:0">
+                <span class="alert-icon"><%- include('../partials/icon', { name: 'alert' }) %></span>
+                <div>Belum ada video. <a href="/videos">Unggah dulu →</a></div>
+              </div>
+            <% } else { %>
+              <select id="video_id" name="video_id" required>
+                <option value="">— pilih video —</option>
+                <% videos.forEach(function (v) { %>
+                  <option value="<%= v.id %>" <%= String(val('video_id', '')) === String(v.id) ? 'selected' : '' %>>
+                    <%= v.title %> · <%= v.width %>×<%= v.height %> · <%= (v.video_codec || '?').toUpperCase() %><%= v.has_audio ? '' : ' · TANPA AUDIO' %>
+                  </option>
+                <% }); %>
+              </select>
+              <div class="hint">Video ini akan diputar berulang selama siaran berlangsung.</div>
+            <% } %>
+          </div>
+
+          <div class="field">
+            <label>Tujuan RTMP</label>
+            <% if (!destinations.length) { %>
+              <div class="alert alert-warn" style="margin:0">
+                <span class="alert-icon"><%- include('../partials/icon', { name: 'alert' }) %></span>
+                <div>Belum ada tujuan. <a href="/destinations">Tambahkan dulu →</a></div>
+              </div>
+            <% } else { %>
+              <% destinations.forEach(function (d) {
+                   const meta = platforms[d.platform] || platforms.custom;
+                   const checked = selectedDestinations.includes(d.id); %>
+                <label class="check <%= checked ? 'selected' : '' %>">
+                  <input type="checkbox" name="destination_ids" value="<%= d.id %>" <%= checked ? 'checked' : '' %>
+                         onchange="this.closest('.check').classList.toggle('selected', this.checked)">
+                  <div class="check-body">
+                    <div class="check-title">
+                      <span class="dot" style="color:<%= meta.color %>"></span>
+                      <%= d.name %>
+                      <% if (!d.active) { %><span class="badge badge-warn">nonaktif</span><% } %>
+                    </div>
+                    <div class="check-desc"><%= meta.label %> · <%= d.rtmp_url %> · key <%= maskKey(d.stream_key) %></div>
+                  </div>
+                </label>
+              <% }); %>
+              <div class="hint">
+                Pilih lebih dari satu untuk menyiarkan ke banyak platform sekaligus — FFmpeg meng-encode
+                sekali lalu menyalurkannya ke semua tujuan.
+              </div>
+            <% } %>
+          </div>
+        </div>
+      </div>
+
+      <!-- --------------------------------------------------- encoding -->
+      <div class="card">
+        <div class="card-head"><h2>Encoding</h2></div>
+        <div class="card-body">
+          <div class="field">
+            <label for="encode_mode">Mode</label>
+            <select id="encode_mode" name="encode_mode" data-toggles="reencodeOptions" data-toggles-value="reencode">
+              <option value="copy" <%= val('encode_mode', 'copy') === 'copy' ? 'selected' : '' %>>
+                Copy — teruskan apa adanya (CPU hampir nol)
+              </option>
+              <option value="reencode" <%= val('encode_mode', 'copy') === 'reencode' ? 'selected' : '' %>>
+                Re-encode — atur ulang resolusi &amp; bitrate (butuh CPU)
+              </option>
+            </select>
+            <div class="hint">
+              <strong>Copy</strong> paling hemat, tapi video sumber harus sudah H.264 + AAC dan
+              bitrate-nya mengikuti file aslinya. <strong>Re-encode</strong> lebih stabil untuk loop
+              panjang dan memungkinkan penyesuaian resolusi/bitrate.
+            </div>
+          </div>
+
+          <div id="reencodeOptions">
+            <div class="form-grid">
+              <div class="field">
+                <label for="resolution">Resolusi</label>
+                <select id="resolution" name="resolution">
+                  <% Object.entries(resolutions).forEach(function ([key, r]) { %>
+                    <option value="<%= key %>" <%= val('resolution', 'source') === key ? 'selected' : '' %>><%= r.label %></option>
+                  <% }); %>
+                </select>
+              </div>
+              <div class="field">
+                <label for="orientation">Orientasi</label>
+                <select id="orientation" name="orientation">
+                  <option value="landscape" <%= val('orientation', 'landscape') === 'landscape' ? 'selected' : '' %>>Landscape (16:9)</option>
+                  <option value="portrait" <%= val('orientation', '') === 'portrait' ? 'selected' : '' %>>Portrait (9:16) — Shorts/TikTok</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="bitrate">Bitrate video (kbps)</label>
+                <input id="bitrate" name="bitrate" type="number" min="500" max="51000" step="100" value="<%= val('bitrate', 4500) %>">
+                <div class="hint">1080p30 ≈ 4500 · 720p30 ≈ 2500 · 1080p60 ≈ 6000</div>
+              </div>
+              <div class="field">
+                <label for="fps">FPS</label>
+                <input id="fps" name="fps" type="number" min="1" max="60" value="<%= val('fps', 30) %>">
+              </div>
+              <div class="field">
+                <label for="audio_bitrate">Bitrate audio (kbps)</label>
+                <input id="audio_bitrate" name="audio_bitrate" type="number" min="32" max="512" step="32" value="<%= val('audio_bitrate', 128) %>">
+              </div>
+              <div class="field">
+                <label for="preset">Preset x264</label>
+                <select id="preset" name="preset">
+                  <% ['ultrafast','superfast','veryfast','faster','fast','medium'].forEach(function (p) { %>
+                    <option value="<%= p %>" <%= val('preset', 'veryfast') === p ? 'selected' : '' %>><%= p %></option>
+                  <% }); %>
+                </select>
+                <div class="hint">Makin ke kanan makin bagus kualitasnya, tapi makin berat CPU.</div>
+              </div>
+            </div>
+          </div>
+
+          <hr>
+
+          <div class="switch-row">
+            <div>
+              <div class="switch-label">Loop video</div>
+              <div class="switch-desc">Ulangi video terus-menerus. Wajib untuk siaran 24/7.</div>
+            </div>
+            <label class="check" style="margin:0;border:0;background:none;padding:0">
+              <input type="checkbox" name="loop_video" value="1" <%= val('loop_video', true) ? 'checked' : '' %>>
+            </label>
+          </div>
+          <div class="switch-row">
+            <div>
+              <div class="switch-label">Restart otomatis</div>
+              <div class="switch-desc">Kalau FFmpeg berhenti tak terduga, coba jalankan lagi (backoff bertingkat, maks 10×).</div>
+            </div>
+            <label class="check" style="margin:0;border:0;background:none;padding:0">
+              <input type="checkbox" name="auto_restart" value="1" <%= val('auto_restart', true) ? 'checked' : '' %>>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <!-- ---------------------------------------------------- rotasi -->
+      <div class="card">
+        <div class="card-head">
+          <h2>Rotasi Metadata</h2>
+          <span class="badge badge-accent">YouTube</span>
+        </div>
+        <div class="card-body">
+          <div class="field">
+            <label for="rotation_profile_id">Profil Rotasi</label>
+            <% if (!profiles.length) { %>
+              <div class="alert alert-info" style="margin:0">
+                <span class="alert-icon"><%- include('../partials/icon', { name: 'info' }) %></span>
+                <div>Belum ada profil. <a href="/rotations">Buat profil rotasi →</a></div>
+              </div>
+            <% } else { %>
+              <select id="rotation_profile_id" name="rotation_profile_id" data-toggles="rotationOptions">
+                <option value="">— tanpa rotasi —</option>
+                <% profiles.forEach(function (p) { %>
+                  <option value="<%= p.id %>" <%= String(val('rotation_profile_id', '')) === String(p.id) ? 'selected' : '' %>>
+                    <%= p.name %> · <%= p.mode %> · <%= p.item_count %> varian
+                  </option>
+                <% }); %>
+              </select>
+            <% } %>
+          </div>
+
+          <div id="rotationOptions">
+            <div class="field">
+              <label for="youtube_account_id">Channel YouTube</label>
+              <% if (!accounts.length) { %>
+                <div class="alert alert-warn" style="margin:0">
+                  <span class="alert-icon"><%- include('../partials/icon', { name: 'alert' }) %></span>
+                  <div>Belum ada channel terhubung. <a href="/accounts">Hubungkan →</a></div>
+                </div>
+              <% } else { %>
+                <select id="youtube_account_id" name="youtube_account_id">
+                  <option value="">— pilih channel —</option>
+                  <% accounts.forEach(function (a) { %>
+                    <option value="<%= a.id %>" <%= String(val('youtube_account_id', '')) === String(a.id) ? 'selected' : '' %>>
+                      <%= a.name %>
+                    </option>
+                  <% }); %>
+                </select>
+                <div class="hint">Metadata yang dirotasi adalah milik broadcast di channel ini.</div>
+              <% } %>
+            </div>
+
+            <label class="check">
+              <!-- Logika terbalik dari data-toggles: field manual justru muncul saat
+                   deteksi otomatis dimatikan, jadi ditangani langsung di sini. -->
+              <input type="checkbox" name="youtube_auto_detect" value="1"
+                     <%= val('youtube_auto_detect', true) ? 'checked' : '' %>
+                     onchange="document.getElementById('manualVideoId').hidden = this.checked">
+              <div class="check-body">
+                <div class="check-title">Deteksi broadcast otomatis</div>
+                <div class="check-desc">Cari siaran yang sedang aktif di channel lewat API. Matikan kalau kamu mau menargetkan video ID tertentu.</div>
+              </div>
+            </label>
+
+            <div class="field" id="manualVideoId" <%= val('youtube_auto_detect', true) ? 'hidden' : '' %>>
+              <label for="youtube_video_id">Video ID manual</label>
+              <input id="youtube_video_id" name="youtube_video_id" type="text"
+                     value="<%= val('youtube_video_id', '') %>" placeholder="dQw4w9WgXcQ">
+              <div class="hint">11 karakter dari URL <code>youtube.com/watch?v=<strong>ini</strong></code>.</div>
+            </div>
+
+            <label class="check">
+              <input type="checkbox" name="rotation_enabled" value="1" <%= val('rotation_enabled', false) ? 'checked' : '' %>>
+              <div class="check-body">
+                <div class="check-title">Aktifkan rotasi</div>
+                <div class="check-desc">Rotasi hanya berjalan saat stream berstatus LIVE.</div>
+              </div>
+            </label>
+
+            <label class="check">
+              <input type="checkbox" name="rotate_on_start" value="1" <%= val('rotate_on_start', true) ? 'checked' : '' %>>
+              <div class="check-body">
+                <div class="check-title">Terapkan varian pertama saat mulai</div>
+                <div class="check-desc">Kalau dimatikan, rotasi pertama menunggu satu interval penuh.</div>
+              </div>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- ---------------------------------------------------- jadwal -->
+      <div class="card">
+        <div class="card-head"><h2>Jadwal</h2></div>
+        <div class="card-body">
+          <label class="check">
+            <input type="checkbox" name="enable_schedule" value="1" data-toggles="scheduleFields"
+                   <%= val('schedule_start_at', null) || val('schedule_end_at', null) ? 'checked' : '' %>>
+            <div class="check-body">
+              <div class="check-title">Jadwalkan mulai / berhenti</div>
+              <div class="check-desc">Waktu mengikuti jam di browser kamu.</div>
+            </div>
+          </label>
+          <div id="scheduleFields" hidden>
+            <div class="field">
+              <label for="schedule_start_at">Mulai pada</label>
+              <input id="schedule_start_at" name="schedule_start_at" type="datetime-local"
+                     value="<%= isoToLocalInput(val('schedule_start_at', null)) %>">
+            </div>
+            <div class="field">
+              <label for="schedule_end_at">Berhenti pada <span class="text-mute">(opsional)</span></label>
+              <input id="schedule_end_at" name="schedule_end_at" type="datetime-local"
+                     value="<%= isoToLocalInput(val('schedule_end_at', null)) %>">
+            </div>
+          </div>
+
+          <hr>
+
+          <label class="check">
+            <input type="checkbox" name="enable_duration" value="1" data-toggles="durationField"
+                   <%= val('duration_minutes', null) ? 'checked' : '' %>>
+            <div class="check-body">
+              <div class="check-title">Batasi durasi siaran</div>
+              <div class="check-desc">Hitung mundur sejak siaran dimulai.</div>
+            </div>
+          </label>
+          <div class="field" id="durationField" hidden>
+            <label for="duration_minutes">Durasi (menit)</label>
+            <input id="duration_minutes" name="duration_minutes" type="number" min="1"
+                   value="<%= val('duration_minutes', '') %>" placeholder="180">
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <div class="btn-row">
+            <button class="btn btn-primary" type="submit">
+              <%= isEdit ? 'Simpan Perubahan' : 'Buat Stream' %>
+            </button>
+            <a href="<%= isEdit ? '/streams/' + s.id : '/streams' %>" class="btn btn-ghost">Batal</a>
+          </div>
+          <% if (isEdit && stream.isActive) { %>
+            <div class="hint mt-1">
+              Stream sedang berjalan. Perubahan encoding baru berlaku setelah kamu menekan
+              <strong>Restart</strong> di halaman detail.
+            </div>
+          <% } %>
+        </div>
+      </div>
+    </div>
+  </div>
+</form>

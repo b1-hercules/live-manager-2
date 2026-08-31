@@ -1,0 +1,45 @@
+{
+  "name": "live-manager",
+  "version": "1.0.0",
+  "description": "Multi-platform live streaming manager dengan rotasi otomatis judul, thumbnail, deskripsi, dan tags",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js",
+    "migrate": "node db/migrate.js",
+    "reset-password": "node scripts/reset-password.js",
+    "generate-secret": "node scripts/generate-secret.js",
+    "postinstall": "node scripts/ensure-native.js"
+  },
+  "keywords": [
+    "live-streaming",
+    "rtmp",
+    "ffmpeg",
+    "youtube",
+    "rotation"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.8.1",
+    "dotenv": "^16.4.7",
+    "ejs": "^3.1.10",
+    "ejs-mate": "^4.0.0",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "express-session": "^1.18.1",
+    "googleapis": "^144.0.0",
+    "multer": "^1.4.5-lts.1",
+    "uuid": "^11.0.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  },
+  "allowScripts": {
+    "better-sqlite3@11.10.0": true
+  }
+}
