@@ -4,6 +4,7 @@ const path = require('path');
 const multer = require('multer');
 const { v4: uuid } = require('uuid');
 const config = require('../config');
+const filetype = require('../utils/filetype');
 
 const VIDEO_EXT = new Set(['.mp4', '.mkv', '.mov', '.avi', '.flv', '.webm', '.m4v', '.ts', '.mpg', '.mpeg']);
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp']);
@@ -51,6 +52,41 @@ const uploadThumbnails = multer({
   fileFilter: extensionFilter(IMAGE_EXT, 'gambar'),
 });
 
+/**
+ * Ekstensi nama file dikendalikan pengunggah, dan fileFilter multer dipanggil
+ * sebelum isi file sampai ke disk — jadi signature baru bisa diperiksa di sini,
+ * setelah file tertulis. Berkas yang ditolak tidak perlu dihapus manual: error
+ * handler global sudah membersihkan unggahan yatim lewat cleanupUploads().
+ */
+function contentError(filePath, originalName, family, label) {
+  let found = null;
+  try {
+    found = filetype.inspect(filePath);
+  } catch (_) {
+    // File tidak terbaca — perlakukan sama dengan signature tak dikenal.
+  }
+  if (found && found.family === family) return null;
+
+  const detail = found ? `isinya terdeteksi sebagai ${found.format}` : 'isinya tidak dikenali';
+  const err = new Error(`"${originalName}" bukan file ${label} yang sah — ${detail}.`);
+  err.status = 400;
+  return err;
+}
+
+function verifyContent(family, label) {
+  return (req, res, next) => {
+    const files = req.file ? [req.file] : Array.isArray(req.files) ? req.files : [];
+    for (const file of files) {
+      const err = contentError(file.path, file.originalname, family, label);
+      if (err) return next(err);
+    }
+    return next();
+  };
+}
+
+const verifyVideoContent = verifyContent('video', 'video');
+const verifyImageContent = verifyContent('image', 'gambar');
+
 /** Ubah path absolut hasil multer jadi path relatif untuk disimpan di DB. */
 function relativePath(absolute) {
   return path.relative(config.root, absolute).split(path.sep).join('/');
@@ -72,5 +108,6 @@ function handleUploadError(err, req, res, next) {
 
 module.exports = {
   uploadVideo, uploadThumbnail, uploadThumbnails,
+  verifyVideoContent, verifyImageContent, contentError,
   relativePath, handleUploadError, VIDEO_EXT, IMAGE_EXT,
 };

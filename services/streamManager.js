@@ -328,6 +328,36 @@ function activeCount() {
   return n;
 }
 
+/** "2500.3kbits/s" → 2500300. null bila FFmpeg belum melaporkan angka ("N/A"). */
+function parseBitrate(raw) {
+  const match = /^([\d.]+)\s*([kmg]?)bits\/s$/i.exec(String(raw || '').trim());
+  if (!match) return null;
+  const value = parseFloat(match[1]);
+  if (!Number.isFinite(value)) return null;
+  // Bitrate memakai satuan desimal (1000), bukan 1024 seperti ukuran berkas.
+  return value * ({ '': 1, k: 1e3, m: 1e6, g: 1e9 }[match[2].toLowerCase()] || 1);
+}
+
+/**
+ * Total bitrate keluar dari seluruh siaran yang berjalan, dalam bit/detik.
+ * Angkanya berasal dari laporan FFmpeg sendiri, jadi ini trafik yang didorong
+ * aplikasi ini — bukan total trafik mesin. Siaran yang belum melaporkan bitrate
+ * (baru mulai, atau "N/A") tidak ikut dihitung dan tidak dianggap nol, supaya
+ * angkanya tidak terlihat lebih kecil dari kenyataan.
+ */
+function egress() {
+  let bitsPerSecond = 0;
+  let streams = 0;
+  for (const state of running.values()) {
+    if (state.stopping) continue;
+    const bits = parseBitrate(state.stats && state.stats.bitrate);
+    if (bits === null) continue;
+    bitsPerSecond += bits;
+    streams += 1;
+  }
+  return { bitsPerSecond, streams };
+}
+
 /**
  * Setelah aplikasi restart, proses FFmpeg lama sudah mati bersama proses induk.
  * Baris yang masih berstatus live harus dikembalikan ke keadaan wajar.
@@ -357,5 +387,5 @@ function shutdown() {
 
 module.exports = {
   start, stop, restart, isRunning, runtime, recentLogs, commandPreview,
-  activeCount, recoverOnBoot, shutdown,
+  activeCount, egress, parseBitrate, recoverOnBoot, shutdown,
 };

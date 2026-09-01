@@ -8,7 +8,7 @@ const streamManager = require('../services/streamManager');
 const rotationEngine = require('../services/rotationEngine');
 const system = require('../services/system');
 const { requireAuth } = require('../middleware/auth');
-const { humanUptime } = require('../utils/helpers');
+const { humanUptime, formatBitrate } = require('../utils/helpers');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -20,6 +20,11 @@ router.get('/overview', (req, res) => {
     ok: true,
     stats: streamModel.stats(req.user.id),
     system: system.snapshot(),
+    // text ikut dikirim supaya formatter tidak perlu ditulis ulang di sisi klien.
+    egress: (() => {
+      const eg = streamManager.egress();
+      return { ...eg, text: formatBitrate(eg.bitsPerSecond) };
+    })(),
     streams: streams.map((s) => ({
       id: s.id,
       title: s.title,

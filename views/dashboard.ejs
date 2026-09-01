@@ -12,6 +12,18 @@
   </div>
 <% } %>
 
+<% if (system.disk && system.disk.percent >= 90) { %>
+  <div class="alert alert-warn">
+    <span class="alert-icon"><%- include('partials/icon', { name: 'alert' }) %></span>
+    <div>
+      <strong>Disk hampir penuh.</strong>
+      Sisa <%= formatBytes(system.disk.free) %> dari <%= formatBytes(system.disk.total) %> (<%= system.disk.percent %>% terpakai).
+      Unggahan baru dan siaran yang sedang berjalan akan gagal begitu ruangnya habis —
+      hapus video yang tidak terpakai di <a href="/videos">galeri</a>.
+    </div>
+  </div>
+<% } %>
+
 <% if (checklistDone < checklist.length) { %>
   <div class="card mb-2">
     <div class="card-head">
@@ -215,7 +227,24 @@
             <% } %>
           </dd>
           <dt>Uptime app</dt><dd class="mono text-sm"><%= Math.floor(system.uptimeSeconds / 3600) %>j <%= Math.floor(system.uptimeSeconds % 3600 / 60) %>m</dd>
-          <dt>Storage</dt><dd class="text-sm"><%= formatBytes(system.storageBytes) %></dd>
+          <dt title="Total bitrate yang dilaporkan FFmpeg dari siaran yang sedang berjalan">Keluar</dt>
+          <dd class="text-sm">
+            <span id="statEgress"><%= formatBitrate(egress.bitsPerSecond) %></span>
+            <span class="text-mute" id="statEgressNote"><%= egress.streams ? `· ${egress.streams} siaran` : '· tidak ada siaran' %></span>
+          </dd>
+          <dt>Storage</dt><dd class="text-sm"><%= formatBytes(system.storageBytes) %> <span class="text-mute">video &amp; thumbnail</span></dd>
+          <dt>Disk</dt>
+          <dd class="text-sm">
+            <% if (system.disk) { %>
+              <%= formatBytes(system.disk.free) %> bebas dari <%= formatBytes(system.disk.total) %>
+              <div class="meter mt-1 <%= system.disk.percent > 90 ? 'danger' : system.disk.percent > 75 ? 'warn' : 'ok' %>">
+                <span style="width: <%= system.disk.percent %>%"></span>
+              </div>
+              <div class="text-xs text-mute mt-1"><%= system.disk.percent %>% terpakai</div>
+            <% } else { %>
+              <span class="text-mute">tidak terbaca di sistem ini</span>
+            <% } %>
+          </dd>
         </dl>
       </div>
     </div>
@@ -227,5 +256,8 @@
   LM.poll('/api/overview', 10000, function (data) {
     document.getElementById('statLive').textContent = data.stats.live;
     document.getElementById('statSys').textContent = data.system.cpu + '% · ' + data.system.memory.percent + '%';
+    document.getElementById('statEgress').textContent = data.egress.text;
+    document.getElementById('statEgressNote').textContent =
+      data.egress.streams ? '· ' + data.egress.streams + ' siaran' : '· tidak ada siaran';
   });
 </script>

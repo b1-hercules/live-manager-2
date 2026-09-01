@@ -10,7 +10,7 @@ const settings = require('../models/settings');
 const streamManager = require('../services/streamManager');
 const system = require('../services/system');
 const { requireAuth } = require('../middleware/auth');
-const { formatBytes, humanUptime } = require('../utils/helpers');
+const { formatBytes, formatBitrate, humanUptime } = require('../utils/helpers');
 
 const router = express.Router();
 
@@ -49,11 +49,13 @@ router.get('/', requireAuth, (req, res) => {
     accounts,
     rotationLogs: rotationModel.listLogs({ userId: req.user.id, limit: 12 }),
     system: system.snapshot(),
+    egress: streamManager.egress(),
     ffmpegStatus: req.app.locals.ffmpegStatus || { ok: false, error: 'Belum diperiksa' },
     checklist,
     checklistDone: checklist.filter((c) => c.done).length,
     platforms: destinationModel.PLATFORMS,
     formatBytes,
+    formatBitrate,
   });
 });
 

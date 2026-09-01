@@ -6,7 +6,7 @@ const streamModel = require('../models/stream');
 const accountModel = require('../models/account');
 const template = require('../services/template');
 const { requireAuth } = require('../middleware/auth');
-const { uploadThumbnail, uploadThumbnails, relativePath, handleUploadError } = require('../middleware/upload');
+const { uploadThumbnail, uploadThumbnails, verifyImageContent, relativePath, handleUploadError } = require('../middleware/upload');
 const csrf = require('../middleware/csrf');
 const { parseTags } = require('../utils/helpers');
 
@@ -111,7 +111,7 @@ router.post('/:id/delete', (req, res) => {
 
 // -------------------------------------------------------- varian (bundle)
 
-router.post('/:id/items', uploadThumbnail.single('thumbnail'), handleUploadError, csrf.verify, (req, res) => {
+router.post('/:id/items', uploadThumbnail.single('thumbnail'), handleUploadError, csrf.verify, verifyImageContent, (req, res) => {
   const profile = ownedProfile(req);
   const item = rotationModel.createItem(profile.id, {
     label: req.body.label,
@@ -174,7 +174,7 @@ router.post('/:id/items/bulk', (req, res) => {
 
 
 /** Unggah banyak thumbnail sekaligus, masing-masing jadi satu varian baru. */
-router.post('/:id/items/bulk-thumbnails', uploadThumbnails.array('thumbnails', 30), handleUploadError, csrf.verify, (req, res) => {
+router.post('/:id/items/bulk-thumbnails', uploadThumbnails.array('thumbnails', 30), handleUploadError, csrf.verify, verifyImageContent, (req, res) => {
   const profile = ownedProfile(req);
   const files = req.files || [];
   if (!files.length) {
@@ -198,7 +198,7 @@ router.post('/:id/items/bulk-thumbnails', uploadThumbnails.array('thumbnails', 3
   res.redirect(`/rotations/${profile.id}`);
 });
 
-router.post('/:id/items/:itemId', uploadThumbnail.single('thumbnail'), handleUploadError, csrf.verify, (req, res) => {
+router.post('/:id/items/:itemId', uploadThumbnail.single('thumbnail'), handleUploadError, csrf.verify, verifyImageContent, (req, res) => {
   const profile = ownedProfile(req);
   const existing = rotationModel.findItem(req.params.itemId);
   if (!existing || existing.profile_id !== profile.id) {
@@ -263,7 +263,7 @@ router.post('/:id/fields/:field', (req, res) => {
   res.redirect(`/rotations/${profile.id}#independent`);
 });
 
-router.post('/:id/fields/:field/values', uploadThumbnails.array('thumbnails', 30), handleUploadError, csrf.verify, (req, res) => {
+router.post('/:id/fields/:field/values', uploadThumbnails.array('thumbnails', 30), handleUploadError, csrf.verify, verifyImageContent, (req, res) => {
   const profile = ownedProfile(req);
   const field = rotationModel.findField(profile.id, req.params.field);
   if (!field) {

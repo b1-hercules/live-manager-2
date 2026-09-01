@@ -57,6 +57,31 @@ function storageUsage() {
   return bytes;
 }
 
+/**
+ * Kapasitas partisi tempat folder storage berada — bukan besar folder aplikasi.
+ * Ini yang menjawab "apakah disk server akan penuh": begitu partisinya habis,
+ * unggahan dan FFmpeg berhenti total, dan storageUsage() saja tidak menunjukkannya.
+ *
+ * fs.statfs baru ada sejak Node 18.15 sedangkan package.json masih mengizinkan
+ * Node 18.0, jadi ketiadaannya diperlakukan sebagai "tidak diketahui" (null),
+ * bukan sebagai error.
+ */
+function diskUsage() {
+  if (typeof fs.statfsSync !== 'function') return null;
+  try {
+    const stat = fs.statfsSync(config.paths.storage);
+    const total = stat.blocks * stat.bsize;
+    // bavail, bukan bfree: blok yang benar-benar boleh dipakai proses biasa.
+    const free = stat.bavail * stat.bsize;
+    if (!Number.isFinite(total) || total <= 0) return null;
+    const used = total - free;
+    return { total, free, used, percent: Math.round((used / total) * 1000) / 10 };
+  } catch (_) {
+    // Filesystem tidak mendukung statfs (mis. share jaringan tertentu).
+    return null;
+  }
+}
+
 function snapshot() {
   return {
     cpu: cpuUsage(),
@@ -67,7 +92,8 @@ function snapshot() {
     hostUptimeSeconds: Math.round(os.uptime()),
     nodeVersion: process.version,
     storageBytes: storageUsage(),
+    disk: diskUsage(),
   };
 }
 
-module.exports = { snapshot, cpuUsage, memory, storageUsage };
+module.exports = { snapshot, cpuUsage, memory, storageUsage, diskUsage };

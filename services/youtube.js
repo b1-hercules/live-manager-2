@@ -14,6 +14,10 @@ const log = createLogger('youtube');
 const SCOPES = [
   'https://www.googleapis.com/auth/youtube.force-ssl', // baca + tulis metadata & thumbnail
   'https://www.googleapis.com/auth/youtube.readonly',
+  // Hanya-baca, dipakai fitur impor video dari Drive. Akun yang dihubungkan
+  // sebelum scope ini ada tetap berfungsi untuk rotasi; impor Drive-nya saja
+  // yang tidak aktif sampai akunnya dihubungkan ulang.
+  'https://www.googleapis.com/auth/drive.readonly',
 ];
 
 /** Error yang membawa informasi cukup untuk diputuskan oleh rotation engine. */

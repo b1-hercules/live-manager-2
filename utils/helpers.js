@@ -72,6 +72,23 @@ function formatBytes(bytes) {
   return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[i]}`;
 }
 
+/**
+ * 8400000 → "8.4 Mbps". Kelipatan 1000, bukan 1024: bitrate jaringan memang
+ * memakai satuan desimal, berbeda dari ukuran berkas di formatBytes.
+ */
+function formatBitrate(bitsPerSecond) {
+  const n = Number(bitsPerSecond) || 0;
+  if (n < 1000) return `${Math.round(n)} bps`;
+  const units = ['kbps', 'Mbps', 'Gbps'];
+  let value = n / 1000;
+  let i = 0;
+  while (value >= 1000 && i < units.length - 1) {
+    value /= 1000;
+    i++;
+  }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[i]}`;
+}
+
 function formatDuration(seconds) {
   const total = Math.max(0, Math.round(Number(seconds) || 0));
   const h = Math.floor(total / 3600);
@@ -160,6 +177,7 @@ module.exports = {
   limitTags,
   safeJsonParse,
   formatBytes,
+  formatBitrate,
   formatDuration,
   humanUptime,
   localInputToIso,

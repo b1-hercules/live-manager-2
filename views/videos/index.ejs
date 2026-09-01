@@ -22,10 +22,18 @@
         <button class="btn btn-primary" type="submit" id="uploadBtn">
           <%- include('../partials/icon', { name: 'upload' }) %> Unggah
         </button>
+        <button class="btn btn-ghost btn-sm" type="button" id="uploadCancel" hidden>Batal</button>
+        <button class="btn btn-sm" type="button" id="driveBtn">
+          <%- include('../partials/icon', { name: 'link' }) %> Impor dari Drive
+        </button>
         <span class="text-xs text-mute" id="uploadNote">
           Video akan diprobe dengan ffprobe dan dibuatkan thumbnail otomatis.
         </span>
       </div>
+      <div id="uploadProgress" class="mt-1" hidden>
+        <div class="meter ok"><span id="uploadBar" style="width:0%"></span></div>
+      </div>
+      <div id="importJobs" class="mt-1"></div>
     </form>
   </div>
 </div>
@@ -51,11 +59,17 @@
       <div class="grid grid-4">
         <% videos.forEach(function (v) { %>
           <div class="video-card">
-            <% if (v.thumbnail_path) { %>
-              <img class="thumb thumb-lg" src="<%= mediaUrl(v.thumbnail_path) %>" alt="" loading="lazy">
-            <% } else { %>
-              <div class="thumb thumb-lg thumb-ph">tanpa thumbnail</div>
-            <% } %>
+            <button type="button" class="thumb-preview"
+                    data-preview-src="<%= mediaUrl(v.filepath) %>"
+                    data-preview-title="<%= v.title %>"
+                    title="Putar pratinjau">
+              <% if (v.thumbnail_path) { %>
+                <img class="thumb thumb-lg" src="<%= mediaUrl(v.thumbnail_path) %>" alt="" loading="lazy">
+              <% } else { %>
+                <div class="thumb thumb-lg thumb-ph">tanpa thumbnail</div>
+              <% } %>
+              <span class="play-badge"><%- include('../partials/icon', { name: 'play' }) %></span>
+            </button>
             <div class="meta">
               <h3 title="<%= v.title %>"><%= v.title %></h3>
               <div class="specs">
@@ -99,13 +113,237 @@
   <% } %>
 </div>
 
+<div id="driveModal" class="modal-backdrop" hidden>
+  <div class="modal-box" role="dialog" aria-modal="true" aria-label="Impor dari Google Drive">
+    <div class="modal-head">
+      <strong>Impor dari Google Drive</strong>
+      <button type="button" class="btn btn-sm btn-ghost" id="driveClose">Tutup</button>
+    </div>
+    <div class="modal-body">
+      <form class="flex gap-1 mb-2" id="driveSearchForm">
+        <input type="search" id="driveSearch" placeholder="Cari nama video di Drive..." style="flex:1">
+        <button class="btn btn-sm" type="submit">Cari</button>
+      </form>
+      <div id="driveList"></div>
+    </div>
+  </div>
+</div>
+
 <script>
-  // Upload video besar bisa lama; beri umpan balik supaya tidak diklik dua kali.
-  document.getElementById('uploadForm')?.addEventListener('submit', function () {
+  (function () {
+    const form = document.getElementById('uploadForm');
+    const input = document.getElementById('video');
     const btn = document.getElementById('uploadBtn');
-    btn.disabled = true;
-    btn.textContent = 'Mengunggah...';
-    document.getElementById('uploadNote').textContent =
-      'Jangan tutup halaman ini. File besar bisa memakan beberapa menit.';
-  });
+    const note = document.getElementById('uploadNote');
+    const cancelBtn = document.getElementById('uploadCancel');
+    const progress = document.getElementById('uploadProgress');
+    const bar = document.getElementById('uploadBar');
+    if (!form) return;
+
+    // Tanpa File.slice (browser sangat lawas) formulir dibiarkan mengirim
+    // multipart biasa seperti sebelumnya — masih jalan, hanya tidak bisa disambung.
+    const canChunk = window.LM && window.File && File.prototype.slice;
+    if (!canChunk) {
+      form.addEventListener('submit', function () {
+        btn.disabled = true;
+        btn.textContent = 'Mengunggah...';
+        note.textContent = 'Jangan tutup halaman ini. File besar bisa memakan beberapa menit.';
+      });
+      return;
+    }
+
+    let job = null;
+
+    form.addEventListener('submit', function (e) {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      e.preventDefault();
+
+      btn.disabled = true;
+      btn.textContent = 'Mengunggah...';
+      progress.hidden = false;
+      cancelBtn.hidden = false;
+
+      job = LM.resumableUpload(file, {
+        title: form.title.value,
+        onProgress: function (sent, total) {
+          const pct = total ? Math.round((sent / total) * 100) : 0;
+          bar.style.width = pct + '%';
+          note.textContent = pct + '% terkirim. Koneksi putus tidak masalah — '
+            + 'unggahan disambung dari posisi terakhir.';
+        },
+      });
+
+      job.promise.then(function () {
+        note.textContent = 'Selesai, memuat ulang galeri...';
+        window.location.href = '/videos';
+      }).catch(function (err) {
+        job = null;
+        btn.disabled = false;
+        btn.innerHTML = 'Unggah';
+        cancelBtn.hidden = true;
+        note.textContent = '';
+        LM.toast(err.message, 'error');
+      });
+    });
+
+    cancelBtn.addEventListener('click', function () {
+      if (job) job.cancel();
+      job = null;
+      progress.hidden = true;
+      cancelBtn.hidden = true;
+      bar.style.width = '0%';
+      btn.disabled = false;
+      btn.innerHTML = 'Unggah';
+      note.textContent = 'Unggahan dibatalkan.';
+    });
+
+    // Menutup tab di tengah unggahan tidak menghanguskan kemajuan: id-nya
+    // tersimpan, jadi memilih berkas yang sama lagi akan menyambung sendiri.
+    window.addEventListener('beforeunload', function (e) {
+      if (!job) return;
+      e.preventDefault();
+      e.returnValue = '';
+    });
+  })();
+
+  // --------------------------------------------- impor dari Google Drive
+  (function () {
+    const openBtn = document.getElementById('driveBtn');
+    const modal = document.getElementById('driveModal');
+    const closeBtn = document.getElementById('driveClose');
+    const searchForm = document.getElementById('driveSearchForm');
+    const searchInput = document.getElementById('driveSearch');
+    const list = document.getElementById('driveList');
+    const jobsBox = document.getElementById('importJobs');
+    if (!openBtn || !window.LM) return;
+
+    function fmtSize(bytes) {
+      if (!bytes) return '';
+      const units = ['KB', 'MB', 'GB', 'TB'];
+      let value = bytes / 1024;
+      let i = 0;
+      while (value >= 1024 && i < units.length - 1) { value /= 1024; i++; }
+      return value.toFixed(value >= 10 ? 0 : 1) + ' ' + units[i];
+    }
+
+    function message(text) {
+      list.textContent = '';
+      const p = document.createElement('p');
+      p.className = 'text-sm text-mute mb-0';
+      p.textContent = text;
+      list.appendChild(p);
+    }
+
+    function render(files) {
+      list.textContent = '';
+      if (!files.length) return message('Tidak ada video yang cocok di Drive.');
+
+      files.forEach(function (file) {
+        const row = document.createElement('div');
+        row.className = 'drive-row';
+
+        const body = document.createElement('div');
+        body.className = 'body';
+        const name = document.createElement('div');
+        name.className = 't';
+        name.textContent = file.name;
+        const detail = document.createElement('div');
+        detail.className = 'd';
+        detail.textContent = [
+          fmtSize(file.size),
+          file.duration ? Math.round(file.duration) + ' detik' : '',
+          file.width ? file.width + '×' + file.height : '',
+        ].filter(Boolean).join(' · ');
+        body.append(name, detail);
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-sm btn-primary';
+        btn.textContent = 'Impor';
+        btn.addEventListener('click', function () {
+          btn.disabled = true;
+          btn.textContent = 'Memulai...';
+          LM.post('/videos/import/drive', { fileId: file.id }).then(function () {
+            LM.toast('Impor "' + file.name + '" dimulai. Boleh tutup jendela ini.', 'success');
+            close();
+            track();
+          }).catch(function (err) {
+            btn.disabled = false;
+            btn.textContent = 'Impor';
+            LM.toast(err.message, 'error');
+          });
+        });
+
+        row.append(body, btn);
+        list.appendChild(row);
+      });
+    }
+
+    function load(query) {
+      message('Memuat daftar video dari Drive...');
+      LM.get('/videos/import/drive/files?q=' + encodeURIComponent(query || ''))
+        .then(function (data) { render(data.files); })
+        .catch(function (err) { message(err.message); });
+    }
+
+    function open() { modal.hidden = false; load(searchInput.value); }
+    function close() { modal.hidden = true; }
+
+    openBtn.addEventListener('click', open);
+    closeBtn.addEventListener('click', close);
+    modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !modal.hidden) close(); });
+    searchForm.addEventListener('submit', function (e) { e.preventDefault(); load(searchInput.value); });
+
+    // ---------------------------------------- kemajuan impor yang berjalan
+    let poller = null;
+
+    function renderJobs(jobs) {
+      jobsBox.textContent = '';
+      jobs.forEach(function (job) {
+        const pct = job.total ? Math.round((job.received / job.total) * 100) : 0;
+        const wrap = document.createElement('div');
+        wrap.className = 'mt-1';
+
+        const label = document.createElement('div');
+        label.className = 'text-xs text-mute';
+        if (job.state === 'error') label.textContent = 'Impor "' + job.name + '" gagal: ' + job.error;
+        else if (job.state === 'done') label.textContent = 'Impor "' + job.name + '" selesai.';
+        else if (job.state === 'processing') label.textContent = 'Memproses "' + job.name + '" (ffprobe & thumbnail)...';
+        else label.textContent = 'Mengunduh "' + job.name + '" — ' + pct + '%';
+        wrap.appendChild(label);
+
+        if (job.state === 'downloading') {
+          const meter = document.createElement('div');
+          meter.className = 'meter ok mt-1';
+          const fill = document.createElement('span');
+          fill.style.width = pct + '%';
+          meter.appendChild(fill);
+          wrap.appendChild(meter);
+        }
+        jobsBox.appendChild(wrap);
+      });
+    }
+
+    function track() {
+      if (poller) return;
+      poller = LM.poll('/videos/import/jobs', 2000, function (data) {
+        renderJobs(data.jobs);
+        const busy = data.jobs.some(function (j) { return j.state === 'downloading' || j.state === 'processing'; });
+        const done = data.jobs.some(function (j) { return j.state === 'done'; });
+        if (busy) return;
+        poller.stop();
+        poller = null;
+        // Galeri dimuat ulang hanya kalau tidak ada impor lain yang berjalan,
+        // supaya kemajuan yang sedang tampil tidak terputus di tengah jalan.
+        if (done) setTimeout(function () { window.location.href = '/videos'; }, 1200);
+      });
+    }
+
+    // Impor yang masih berjalan dari kunjungan sebelumnya tetap terlihat.
+    LM.get('/videos/import/jobs').then(function (data) {
+      if (data.jobs.length) { renderJobs(data.jobs); track(); }
+    }).catch(function () { /* tidak penting kalau gagal */ });
+  })();
 </script>

@@ -4,6 +4,7 @@ const streamModel = require('../models/stream');
 const rotationModel = require('../models/rotation');
 const settings = require('../models/settings');
 const streamManager = require('./streamManager');
+const chunkUpload = require('./chunkUpload');
 const { createLogger } = require('../utils/logger');
 
 const log = createLogger('scheduler');
@@ -118,6 +119,14 @@ function cleanup() {
     if (removed) log.info(`${removed} baris log rotasi lama dihapus`);
   } catch (err) {
     log.error('Pembersihan log gagal', err);
+  }
+
+  // Blok terpisah supaya kegagalan pembersihan log tidak ikut membatalkan ini.
+  try {
+    const abandoned = chunkUpload.sweep();
+    if (abandoned) log.info(`${abandoned} unggahan tertinggal dihapus`);
+  } catch (err) {
+    log.error('Pembersihan unggahan tertinggal gagal', err);
   }
 }
 

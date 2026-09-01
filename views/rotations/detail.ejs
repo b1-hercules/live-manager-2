@@ -55,7 +55,9 @@
     <div class="card">
       <div class="card-head">
         <h2>Varian Metadata</h2>
-        <span class="sub">diterapkan berurutan sesuai mode <strong><%= profile.order_mode %></strong></span>
+        <span class="sub">
+          diterapkan berurutan sesuai mode <strong><%= profile.order_mode %></strong><% if (items.length > 1) { %> · seret nomor untuk mengubah urutan<% } %>
+        </span>
       </div>
 
       <% if (!items.length) { %>
@@ -65,10 +67,13 @@
           <p>Tambahkan varian pertama lewat form di sebelah kanan, atau tempel banyak judul sekaligus dengan mode massal.</p>
         </div>
       <% } else { %>
-        <div class="card-body tight">
+        <div class="card-body tight" data-sortable="/rotations/<%= profile.id %>/items/reorder">
           <% items.forEach(function (item, i) { %>
-            <div class="item-row <%= item.active ? '' : 'inactive' %>">
-              <span class="idx"><%= i + 1 %></span>
+            <div class="item-row <%= item.active ? '' : 'inactive' %>" data-sort-id="<%= item.id %>">
+              <span class="idx sort-handle" data-sort-handle title="Seret untuk mengubah urutan">
+                <span data-sort-index><%= i + 1 %></span>
+                <span class="grip"><%- include('../partials/icon', { name: 'grip' }) %></span>
+              </span>
               <% if (item.thumbnail_path) { %>
                 <img class="thumb thumb-md" src="<%= mediaUrl(item.thumbnail_path) %>" alt="" loading="lazy">
               <% } else { %>
