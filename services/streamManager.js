@@ -6,10 +6,12 @@ const { spawn } = require('child_process');
 const config = require('../config');
 const streamModel = require('../models/stream');
 const videoModel = require('../models/video');
+const playlistModel = require('../models/playlist');
 const destinationModel = require('../models/destination');
 const ffmpeg = require('./ffmpeg');
 const rotationEngine = require('./rotationEngine');
 const { createLogger } = require('../utils/logger');
+const { shuffle } = require('../utils/helpers');
 
 const log = createLogger('stream');
 
@@ -25,6 +27,51 @@ const LOG_BUFFER_LINES = 120;
 
 // ------------------------------------------------------------------- start
 
+/** Path absolut sebuah video, dari nilai relatif yang tersimpan di database. */
+function absoluteVideoPath(filepath) {
+  return path.isAbsolute(filepath) ? filepath : path.join(config.root, filepath);
+}
+
+/**
+ * Tentukan sumber siaran: satu video, atau playlist berisi beberapa video.
+ * Mengembalikan { source } untuk buildArgs, atau { error } berisi alasan yang
+ * bisa langsung ditampilkan ke pengguna.
+ */
+function resolveSource(stream) {
+  if (stream.playlist_id) {
+    const playlist = playlistModel.findById(stream.playlist_id);
+    if (!playlist) return { error: 'Playlist sumber siaran ini sudah dihapus' };
+
+    const items = playlistModel.listItems(playlist.id);
+    if (!items.length) return { error: `Playlist "${playlist.name}" belum berisi video` };
+
+    const missing = items.find((item) => !fs.existsSync(absoluteVideoPath(item.filepath)));
+    if (missing) return { error: `File video "${missing.title}" tidak ditemukan di disk` };
+
+    // Ketidakcocokan spesifikasi menghasilkan siaran rusak, bukan sekadar
+    // kurang rapi — jadi dihentikan di sini, bukan dibiarkan gagal di tengah.
+    const blockers = ffmpeg.playlistBlockers(stream, items);
+    if (blockers.length) return { error: blockers.join(' ') };
+
+    const ordered = playlist.shuffle ? shuffle(items) : items;
+    return {
+      source: ffmpeg.buildConcatSource(
+        stream.id,
+        ordered.map((item) => ({ ...item, filepath: absoluteVideoPath(item.filepath) }))
+      ),
+      label: `playlist "${playlist.name}" (${items.length} video)`,
+    };
+  }
+
+  const video = stream.video_id ? videoModel.findById(stream.video_id) : null;
+  if (!video) return { error: 'Stream ini belum punya video sumber' };
+
+  const absVideo = absoluteVideoPath(video.filepath);
+  if (!fs.existsSync(absVideo)) return { error: 'File video tidak ditemukan di disk' };
+
+  return { source: { ...video, filepath: absVideo }, label: video.title };
+}
+
 async function start(streamId, { manual = true } = {}) {
   const existing = running.get(streamId);
   if (existing && !existing.stopping) {
@@ -34,13 +81,10 @@ async function start(streamId, { manual = true } = {}) {
   const stream = streamModel.findById(streamId);
   if (!stream) return { ok: false, error: 'Stream tidak ditemukan' };
 
-  const video = stream.video_id ? videoModel.findById(stream.video_id) : null;
-  if (!video) return { ok: false, error: 'Stream ini belum punya video sumber' };
-
-  const absVideo = path.isAbsolute(video.filepath) ? video.filepath : path.join(config.root, video.filepath);
-  if (!fs.existsSync(absVideo)) {
-    streamModel.setStatus(streamId, 'error', { error_message: 'File video tidak ditemukan di disk' });
-    return { ok: false, error: 'File video tidak ditemukan di disk' };
+  const resolved = resolveSource(stream);
+  if (resolved.error) {
+    streamModel.setStatus(streamId, 'error', { error_message: resolved.error });
+    return { ok: false, error: resolved.error };
   }
 
   const destinations = destinationModel.listForStream(streamId).filter((d) => d.active);
@@ -49,7 +93,7 @@ async function start(streamId, { manual = true } = {}) {
   }
 
   const urls = destinations.map((d) => destinationModel.buildUrl(d));
-  const args = ffmpeg.buildArgs(stream, { ...video, filepath: absVideo }, urls);
+  const args = ffmpeg.buildArgs(stream, resolved.source, urls);
 
   streamModel.setStatus(streamId, 'starting', {
     started_at: new Date().toISOString(),
@@ -159,6 +203,9 @@ function handleExit(streamId, state, code, signal) {
 
   if (state.stopping) {
     running.delete(streamId);
+    // Daftar concat hanya berguna selama siaran berjalan. Dihapus di sini,
+    // bukan saat restart otomatis, sebab proses baru masih membacanya.
+    ffmpeg.cleanupConcatFile(streamId);
     streamModel.setStatus(streamId, 'idle', { pid: null, ended_at: new Date().toISOString() });
     streamModel.addLog(streamId, 'info', `Siaran dihentikan (${state.stopReason || 'manual'})`);
     streamModel.trimLogs(streamId);
@@ -314,11 +361,14 @@ function commandPreview(streamId) {
     return ffmpeg.previewCommand(state.args, { redact: state.destinations.map((d) => d.stream_key) });
   }
   const stream = streamModel.findById(streamId);
-  if (!stream?.video_id) return null;
-  const video = videoModel.findById(stream.video_id);
+  if (!stream) return null;
   const destinations = destinationModel.listForStream(streamId).filter((d) => d.active);
-  if (!video || !destinations.length) return null;
-  const args = ffmpeg.buildArgs(stream, video, destinations.map((d) => destinationModel.buildUrl(d)));
+  if (!destinations.length) return null;
+
+  const resolved = resolveSource(stream);
+  if (resolved.error) return null;
+
+  const args = ffmpeg.buildArgs(stream, resolved.source, destinations.map((d) => destinationModel.buildUrl(d)));
   return ffmpeg.previewCommand(args, { redact: destinations.map((d) => d.stream_key) });
 }
 

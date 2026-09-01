@@ -98,6 +98,7 @@ app.use(requireSetup);
 app.use('/', require('./routes/auth'));
 app.use('/', require('./routes/dashboard'));
 app.use('/videos', require('./routes/videos'));
+app.use('/playlists', require('./routes/playlists'));
 app.use('/destinations', require('./routes/destinations'));
 app.use('/streams', require('./routes/streams'));
 app.use('/rotations', require('./routes/rotations'));

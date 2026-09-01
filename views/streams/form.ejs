@@ -22,23 +22,56 @@
             <div class="hint">Nama internal untuk kamu sendiri. Judul yang tampil di YouTube diatur lewat profil rotasi.</div>
           </div>
 
+          <% const usingPlaylist = Boolean(val('playlist_id', '')); %>
           <div class="field">
-            <label for="video_id">Video Sumber</label>
+            <label>Sumber Siaran</label>
             <% if (!videos.length) { %>
               <div class="alert alert-warn" style="margin:0">
                 <span class="alert-icon"><%- include('../partials/icon', { name: 'alert' }) %></span>
                 <div>Belum ada video. <a href="/videos">Unggah dulu →</a></div>
               </div>
             <% } else { %>
-              <select id="video_id" name="video_id" required>
-                <option value="">— pilih video —</option>
-                <% videos.forEach(function (v) { %>
-                  <option value="<%= v.id %>" <%= String(val('video_id', '')) === String(v.id) ? 'selected' : '' %>>
-                    <%= v.title %> · <%= v.width %>×<%= v.height %> · <%= (v.video_codec || '?').toUpperCase() %><%= v.has_audio ? '' : ' · TANPA AUDIO' %>
-                  </option>
-                <% }); %>
-              </select>
-              <div class="hint">Video ini akan diputar berulang selama siaran berlangsung.</div>
+              <div class="tabs" style="margin-bottom:10px">
+                <button class="tab <%= usingPlaylist ? '' : 'active' %>" type="button" data-tab="srcVideo">Satu Video</button>
+                <button class="tab <%= usingPlaylist ? 'active' : '' %>" type="button" data-tab="srcPlaylist">Playlist</button>
+              </div>
+
+              <div id="srcVideo" <%= usingPlaylist ? 'hidden' : '' %>>
+                <select id="video_id" name="video_id">
+                  <option value="">— pilih video —</option>
+                  <% videos.forEach(function (v) { %>
+                    <option value="<%= v.id %>" <%= String(val('video_id', '')) === String(v.id) ? 'selected' : '' %>>
+                      <%= v.title %> · <%= v.width %>×<%= v.height %> · <%= (v.video_codec || '?').toUpperCase() %><%= v.has_audio ? '' : ' · TANPA AUDIO' %>
+                    </option>
+                  <% }); %>
+                </select>
+                <div class="hint">Video ini akan diputar berulang selama siaran berlangsung.</div>
+              </div>
+
+              <div id="srcPlaylist" <%= usingPlaylist ? '' : 'hidden' %>>
+                <% if (!playlists.length) { %>
+                  <div class="alert alert-info" style="margin:0">
+                    <span class="alert-icon"><%- include('../partials/icon', { name: 'info' }) %></span>
+                    <div>
+                      Belum ada playlist. <a href="/playlists">Buat playlist →</a> kalau ingin beberapa
+                      video diputar berurutan tanpa mengulang satu video yang sama.
+                    </div>
+                  </div>
+                <% } else { %>
+                  <select id="playlist_id" name="playlist_id">
+                    <option value="">— pilih playlist —</option>
+                    <% playlists.forEach(function (p) { %>
+                      <option value="<%= p.id %>" <%= String(val('playlist_id', '')) === String(p.id) ? 'selected' : '' %>>
+                        <%= p.name %> · <%= p.item_count %> video<%= p.shuffle ? ' · acak' : '' %>
+                      </option>
+                    <% }); %>
+                  </select>
+                  <div class="hint">
+                    Video diputar berurutan, lalu daftarnya diulang dari awal bila loop aktif.
+                    Pastikan resolusi dan codec antar video seragam, atau pakai mode Re-encode.
+                  </div>
+                <% } %>
+              </div>
             <% } %>
           </div>
 
@@ -310,3 +343,20 @@
     </div>
   </div>
 </form>
+
+<script>
+  // Kedua pilihan sumber tetap ada di DOM saat tabnya disembunyikan, jadi
+  // keduanya ikut terkirim. Yang tersembunyi dikosongkan sebelum submit supaya
+  // sisa pilihan lama tidak diam-diam menang di server.
+  (function () {
+    const form = document.querySelector('form');
+    const video = document.getElementById('srcVideo');
+    const playlist = document.getElementById('srcPlaylist');
+    if (!form || !video || !playlist) return;
+
+    form.addEventListener('submit', function () {
+      const hidden = video.hidden ? video : playlist;
+      hidden.querySelectorAll('select').forEach(function (select) { select.value = ''; });
+    });
+  })();
+</script>

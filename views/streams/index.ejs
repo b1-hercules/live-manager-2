@@ -55,7 +55,13 @@
                 </div>
               </td>
               <td class="text-sm">
-                <% if (s.video_thumbnail) { %>
+                <% if (s.playlist_name) { %>
+                  <div class="flex items-center gap-1">
+                    <%- include('../partials/icon', { name: 'list' }) %>
+                    <span class="truncate" style="max-width:130px"><%= s.playlist_name %></span>
+                    <span class="text-xs text-mute nowrap"><%= s.playlist_count %> video</span>
+                  </div>
+                <% } else if (s.video_thumbnail) { %>
                   <div class="flex items-center gap-1">
                     <img class="thumb thumb-sm" src="<%= mediaUrl(s.video_thumbnail) %>" alt="" loading="lazy">
                     <span class="truncate" style="max-width:130px"><%= s.video_title %></span>

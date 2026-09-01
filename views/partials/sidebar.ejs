@@ -19,6 +19,9 @@
     <a href="/videos" class="nav-item <%= currentPath.startsWith('/videos') ? 'active' : '' %>">
       <%- include('icon', { name: 'video' }) %> Galeri Video
     </a>
+    <a href="/playlists" class="nav-item <%= currentPath.startsWith('/playlists') ? 'active' : '' %>">
+      <%- include('icon', { name: 'list' }) %> Playlist
+    </a>
     <a href="/destinations" class="nav-item <%= currentPath.startsWith('/destinations') ? 'active' : '' %>">
       <%- include('icon', { name: 'target' }) %> Tujuan RTMP
     </a>

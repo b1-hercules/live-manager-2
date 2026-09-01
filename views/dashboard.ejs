@@ -112,7 +112,7 @@
                 </div>
                 <div class="t"><a href="/streams/<%= s.id %>"><%= s.title %></a></div>
                 <div class="d">
-                  <%= s.video_title || 'Tanpa video' %>
+                  <%= s.playlist_name ? `${s.playlist_name} (${s.playlist_count} video)` : (s.video_title || 'Tanpa video') %>
                   <% if (s.runtime && s.runtime.stats.updatedAt) { %>
                     · <span class="mono"><%= s.runtime.stats.fps %> fps · <%= s.runtime.stats.bitrate %> · speed <%= s.runtime.stats.speed %></span>
                   <% } %>

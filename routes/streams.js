@@ -3,6 +3,7 @@
 const express = require('express');
 const streamModel = require('../models/stream');
 const videoModel = require('../models/video');
+const playlistModel = require('../models/playlist');
 const destinationModel = require('../models/destination');
 const rotationModel = require('../models/rotation');
 const accountModel = require('../models/account');
@@ -30,6 +31,7 @@ function ownedStream(req) {
 function formContext(req) {
   return {
     videos: videoModel.listByUser(req.user.id),
+    playlists: playlistModel.listByUser(req.user.id),
     destinations: destinationModel.listByUser(req.user.id),
     profiles: rotationModel.listProfiles(req.user.id),
     accounts: accountModel.listByUser(req.user.id, 'youtube'),
@@ -79,8 +81,8 @@ router.get('/new', (req, res) => {
 router.post('/', (req, res) => {
   const destinationIds = [].concat(req.body.destination_ids || []).filter(Boolean);
 
-  if (!req.body.video_id) {
-    req.session.flash = { type: 'error', message: 'Pilih video sumber terlebih dahulu.' };
+  if (!req.body.video_id && !req.body.playlist_id) {
+    req.session.flash = { type: 'error', message: 'Pilih video atau playlist sebagai sumber siaran.' };
     return res.redirect('/streams/new');
   }
   if (!destinationIds.length) {
@@ -103,6 +105,7 @@ router.post('/', (req, res) => {
 router.get('/:id', (req, res) => {
   const stream = ownedStream(req);
   const video = stream.video_id ? videoModel.findById(stream.video_id) : null;
+  const playlistItems = stream.playlist_id ? playlistModel.listItems(stream.playlist_id) : [];
   const destinations = destinationModel.listForStream(stream.id);
 
   let commandPreview = null;
@@ -126,7 +129,10 @@ router.get('/:id', (req, res) => {
     rotationState: rotationModel.getState(stream.id),
     account: stream.youtube_account_id ? accountModel.findById(stream.youtube_account_id) : null,
     quota: stream.youtube_account_id ? accountModel.getQuota(stream.youtube_account_id) : null,
-    warnings: video ? ffmpeg.compatibilityWarnings(stream, video) : ['Stream ini belum punya video sumber.'],
+    playlistItems,
+    warnings: stream.playlist_id
+      ? ffmpeg.playlistWarnings(stream, playlistItems)
+      : (video ? ffmpeg.compatibilityWarnings(stream, video) : ['Stream ini belum punya video sumber.']),
     commandPreview,
     uptime: humanUptime(stream.started_at),
     formatDuration,

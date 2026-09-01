@@ -272,6 +272,38 @@ const MIGRATIONS = [
       CREATE INDEX idx_rotlogs_stream ON rotation_logs(stream_id, id DESC);
     `);
   },
+
+  // v4 — playlist: beberapa video diputar berurutan dalam satu siaran.
+  // Sebelumnya satu stream hanya bisa memutar satu video yang diulang terus.
+  (d) => {
+    d.exec(`
+      CREATE TABLE playlists (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name        TEXT NOT NULL,
+        description TEXT,
+        shuffle     INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      -- Satu video boleh muncul lebih dari sekali dalam playlist yang sama,
+      -- jadi kuncinya id sendiri, bukan pasangan (playlist_id, video_id).
+      CREATE TABLE playlist_items (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+        video_id    INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+        position    INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_playlistitems_playlist ON playlist_items(playlist_id, position);
+
+      -- Sumber siaran: video_id ATAU playlist_id, tidak keduanya. Dibiarkan
+      -- sebagai dua kolom (bukan satu kolom polimorfik) supaya foreign key
+      -- tetap bisa dipakai; yang menegakkan aturannya models/stream.js.
+      ALTER TABLE streams ADD COLUMN playlist_id INTEGER REFERENCES playlists(id) ON DELETE SET NULL;
+    `);
+  },
 ];
 
 function migrate() {

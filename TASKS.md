@@ -15,6 +15,55 @@ _(kosong)_
 
 ## DONE
 
+### Playlist multi-video — 2026-09-01
+Gap yang terlewat di analisis awal, ditemukan saat user bertanya "berapa video untuk
+live 24 jam" — jawabannya terpaksa "satu", karena `streams.video_id` tunggal.
+
+**Koreksi analisis 2026-08-31**: saya menulis "shuffle rotasi sudah ada, bukan gap".
+Keliru — `shuffleArray` StreamFlow dipanggil `buildFFmpegArgsForPlaylist` (mengacak
+urutan **video**), sedangkan `shuffle` di sini mengacak urutan **varian metadata**.
+Beda fitur.
+
+**Perilaku concat demuxer diuji empiris dulu sebelum mendesain** (bukan diasumsikan):
+| Uji | Hasil |
+| --- | --- |
+| Spec sama + copy | 6,02s dari 2×3s — benar |
+| Spec beda + copy | 7,22s **dan** frame 720p tercampur di stream 480p — rusak |
+| Spec beda + re-encode | resolusi ternormalisasi, timestamp tetap meleset di sambungan |
+| `-stream_loop -1` + concat | 14,1s dari playlist 6s — loop seluruh daftar, jalan |
+| Path absolut Windows | jalan dengan garis miring maju |
+
+Temuan kedua itulah alasan adanya `playlistBlockers()`: playlist tak seragam di mode
+Copy **ditolak sebelum siaran mulai**, bukan dibiarkan gagal di tengah.
+
+- Migrasi **v4**: tabel `playlists`, `playlist_items`, kolom `streams.playlist_id`.
+  Video sama boleh muncul berkali-kali (kunci = `playlist_items.id`).
+- `services/ffmpeg.js` — `buildConcatSource()` (kutip tunggal di-escape `'\''`,
+  path garis miring maju), `cleanupConcatFile()`, `playlistWarnings()`,
+  `playlistBlockers()`. `buildArgs` menerima sumber playlist; jalur video tunggal
+  **tidak diubah sama sekali** dan itu diuji dengan perbandingan argumen persis.
+- `services/streamManager.js` — `resolveSource()` menentukan video atau playlist,
+  memeriksa berkas ada, menolak playlist bermasalah, dan mengacak bila diminta.
+- `models/playlist.js`, `routes/playlists.js`, `views/playlists/*`, entri sidebar,
+  serta pilihan sumber di form stream (tab Video/Playlist).
+- Drag-and-drop memakai ulang `[data-sortable]` dari fitur reorder rotasi.
+
+**Impact analysis: CRITICAL** (47 simbol, 92 flow) — dan berbeda dari kasus
+sebelumnya, ini bukan false positive: `start`, `launch`, `handleExit`, `buildArgs`,
+`normalize`, `create`, `update`, `findById` memang berubah. Karena itu jalur lama
+diuji terpisah, bukan hanya jalur baru.
+
+- Tes 70/70 pass: 32 fondasi (termasuk argumen video tunggal identik + siaran
+  concat nyata), 30 end-to-end (**siaran playlist benar-benar mengalir ke RTMP**,
+  kepemilikan, reorder, penolakan playlist campuran, pembersihan berkas concat),
+  8 regresi video tunggal (**siaran nyata mengalir, tanpa berkas concat**).
+
+**Bug yang ditemukan & diperbaiki saat pengujian**: `playlistBlockers()` semula
+keluar lebih awal saat mode re-encode, sehingga playlist dengan sebagian video
+tanpa audio lolos. Re-encode bisa menyeragamkan gambar, tapi tidak bisa memunculkan
+track audio yang tidak ada — susunan stream berubah di tengah siaran dan platform
+memutus koneksi. Sekarang pemeriksaan audio berlaku di kedua mode.
+
 ### Impor video dari Google Drive — 2026-08-31
 Nol dependency baru: `googleapis` sudah ada, dan koneksi OAuth YouTube yang ada
 dipakai ulang — `include_granted_scopes: true` memang sudah aktif sejak awal.
@@ -203,4 +252,5 @@ Hasil investigasi gap-analysis (GitNexus query/FTS lagi degraded di mesin ini �
 - **`detect_changes` bisa memberi HIGH risk palsu dari baris `module.exports`**: menambah nama ke daftar export membuat baris itu berubah, dan GitNexus mengatribusikan perubahan baris tersebut ke SEMUA simbol yang namanya tersebut di situ. Saat `egress`/`parseBitrate` ditambahkan, `recoverOnBoot` dan `shutdown` ikut ditandai "touched" → risk HIGH, 7 proses Boot terdampak, padahal `git diff -U0` membuktikan bodinya tidak tersentuh (cuma bergeser 30 baris). Cara memastikannya: `git diff -U0 <file>` untuk melihat hunk sebenarnya, lalu uji perilaku simbol yang ditandai. Sudah diverifikasi dengan tes khusus `recoverOnBoot` (9/9 pass: stream `live` yang tertinggal → `idle` bila auto_restart, `error` + pesan sebab bila tidak, pid dibersihkan, log peringatan tertulis). Jangan otomatis menganggap HIGH di sini sebagai bahaya nyata — tapi jangan pula melewatinya tanpa bukti.
 - **Node tidak punya API bawaan untuk throughput network**: `os.networkInterfaces()` hanya memberi alamat, bukan penghitung byte. Pilihannya cuma dependency (`systeminformation`), kode per-OS (`/proc/net/dev` + PowerShell), atau sumber lain. Dipilih: agregasi bitrate FFmpeg. Kalau nanti butuh total trafik mesin (bukan cuma siaran), keputusan ini perlu ditinjau ulang.
 - **`fetch()` + penanganan error server**: `wantsJson()` (`middleware/auth.js:54`) menilai dari `req.xhr`, awalan path `/api/`, atau header `Accept`. `fetch()` mengirim `Accept: */*`, jadi endpoint JSON di luar `/api/` mengembalikan **redirect HTML** saat error dan pesannya hilang. Setiap pemanggil fetch harus menyertakan `Accept: application/json`. Sudah diperbaiki di `LM.post` dan `LM.resumableUpload`; ingat ini kalau menambah pemanggil baru.
+- **WAL bisa menelan migrasi saat tes backup/restore DB**: `db/index.js` memakai `journal_mode = WAL`, jadi tulisan baru (termasuk migrasi) awalnya hanya ada di `livemanager.db-wal`. Pola tes "salin `.db` → jalankan → kembalikan `.db` + hapus `-wal`" **membuang** apa pun yang belum di-checkpoint. Migrasi v4 sempat hilang diam-diam karenanya (`user_version` balik ke 3, lalu `test-recoveronboot` gagal dengan "table streams has no column named playlist_id"). Perbaikannya: `pragma('wal_checkpoint(TRUNCATE)')` sebelum menyalin. Sudah ditambahkan ke semua skrip tes; ingat ini kalau membuat skrip baru yang menyentuh DB.
 - **Require dari scratchpad**: modul project bisa di-require lewat path absolut, tapi dependency-nya (mis. `better-sqlite3`) tidak — harus ditunjuk ke `<ROOT>/node_modules/<nama>` karena resolusi mengikuti lokasi file skrip, bukan cwd.

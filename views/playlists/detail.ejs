@@ -1,0 +1,147 @@
+<% layout('layouts/main') %>
+
+<div class="flex items-center gap-1 wrap mb-2">
+  <a href="/playlists" class="btn btn-ghost btn-sm">← Semua playlist</a>
+  <span class="text-sm text-mute">
+    <%= items.length %> video · total <%= formatDuration(totalDuration) %>
+  </span>
+</div>
+
+<% if (copyWarnings.length) { %>
+  <div class="alert alert-warn">
+    <span class="alert-icon"><%- include('../partials/icon', { name: 'alert' }) %></span>
+    <div>
+      <strong>Video dalam playlist ini tidak seragam.</strong>
+      <ul style="margin:6px 0 0;padding-left:18px">
+        <% copyWarnings.forEach(function (w) { %><li class="text-sm"><%= w %></li><% }); %>
+      </ul>
+      <% if (!reencodeWarnings.length) { %>
+        <div class="text-sm mt-1">Pakai mode <strong>Re-encode</strong> di form stream dan semuanya beres.</div>
+      <% } %>
+    </div>
+  </div>
+<% } %>
+
+<% if (usedBy.length) { %>
+  <div class="alert alert-info">
+    <span class="alert-icon"><%- include('../partials/icon', { name: 'info' }) %></span>
+    <div>
+      Dipakai oleh stream:
+      <% usedBy.forEach(function (s, i) { %><a href="/streams/<%= s.id %>"><%= s.title %></a><%= i < usedBy.length - 1 ? ', ' : '' %><% }); %>.
+      Perubahan urutan baru berlaku saat siaran dimulai ulang.
+    </div>
+  </div>
+<% } %>
+
+<div class="grid grid-main">
+  <div class="card">
+    <div class="card-head">
+      <h2>Urutan Putar</h2>
+      <span class="sub">
+        <% if (playlist.shuffle) { %>diacak tiap siaran dimulai<% } else if (items.length > 1) { %>seret nomor untuk mengubah urutan<% } %>
+      </span>
+    </div>
+
+    <% if (!items.length) { %>
+      <div class="empty">
+        <div class="empty-icon"><%- include('../partials/icon', { name: 'video' }) %></div>
+        <h3>Playlist masih kosong</h3>
+        <p>Tambahkan video dari panel di sebelah kanan. Video yang sama boleh dimasukkan lebih dari sekali.</p>
+      </div>
+    <% } else { %>
+      <div class="card-body tight" data-sortable="/playlists/<%= playlist.id %>/items/reorder">
+        <% items.forEach(function (item, i) { %>
+          <div class="item-row" data-sort-id="<%= item.id %>">
+            <span class="idx sort-handle" data-sort-handle title="Seret untuk mengubah urutan">
+              <span data-sort-index><%= i + 1 %></span>
+              <span class="grip"><%- include('../partials/icon', { name: 'grip' }) %></span>
+            </span>
+            <% if (item.thumbnail_path) { %>
+              <img class="thumb thumb-md" src="<%= mediaUrl(item.thumbnail_path) %>" alt="" loading="lazy">
+            <% } else { %>
+              <div class="thumb thumb-md thumb-ph">no img</div>
+            <% } %>
+            <div class="body">
+              <div class="t"><%= item.title %></div>
+              <div class="text-xs text-mute mt-1">
+                <%= formatDuration(item.duration) %> · <%= item.width %>×<%= item.height %>
+                · <%= Math.round(item.fps || 0) %>fps
+                · <span class="badge badge-muted"><%= (item.video_codec || '?').toUpperCase() %></span>
+                <% if (!item.has_audio) { %> <span class="badge badge-warn">tanpa audio</span><% } %>
+              </div>
+            </div>
+            <form method="post" action="/playlists/<%= playlist.id %>/items/<%= item.id %>/delete"
+                  data-confirm="Keluarkan &quot;<%= item.title %>&quot; dari playlist?">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn-sm btn-danger" type="submit" title="Keluarkan dari playlist">
+                <%- include('../partials/icon', { name: 'trash' }) %>
+              </button>
+            </form>
+          </div>
+        <% }); %>
+      </div>
+    <% } %>
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card-head"><h2>Tambah Video</h2></div>
+      <div class="card-body">
+        <% if (!videos.length) { %>
+          <p class="text-sm text-mute mb-1">Galeri masih kosong.</p>
+          <a href="/videos" class="btn btn-sm btn-block">Unggah Video</a>
+        <% } else { %>
+          <form method="post" action="/playlists/<%= playlist.id %>/items">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <div class="field">
+              <label for="video_id">Video</label>
+              <select id="video_id" name="video_id" required>
+                <% videos.forEach(function (v) { %>
+                  <option value="<%= v.id %>">
+                    <%= v.title %> — <%= formatDuration(v.duration) %>, <%= v.width %>×<%= v.height %>
+                  </option>
+                <% }); %>
+              </select>
+              <div class="hint">Boleh menambahkan video yang sama lebih dari sekali.</div>
+            </div>
+            <button class="btn btn-primary btn-sm btn-block" type="submit">
+              <%- include('../partials/icon', { name: 'plus' }) %> Tambahkan
+            </button>
+          </form>
+        <% } %>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Pengaturan</h2></div>
+      <div class="card-body">
+        <form method="post" action="/playlists/<%= playlist.id %>">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="field">
+            <label for="pname">Nama</label>
+            <input id="pname" name="name" type="text" value="<%= playlist.name %>" required maxlength="120">
+          </div>
+          <div class="field">
+            <label for="pdesc">Catatan</label>
+            <textarea id="pdesc" name="description" rows="2" maxlength="500"><%= playlist.description || '' %></textarea>
+          </div>
+          <label class="check">
+            <input type="checkbox" name="shuffle" value="1" <%= playlist.shuffle ? 'checked' : '' %>>
+            <div class="check-body">
+              <div class="check-title">Acak urutan</div>
+              <div class="check-desc">Diacak setiap siaran dimulai, bukan tiap video berganti.</div>
+            </div>
+          </label>
+          <button class="btn btn-primary btn-sm" type="submit">Simpan</button>
+        </form>
+      </div>
+      <div class="card-foot">
+        <form method="post" action="/playlists/<%= playlist.id %>/delete"
+              data-confirm="Hapus playlist &quot;<%= playlist.name %>&quot;? Video di galeri tidak ikut terhapus.">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn-sm btn-danger" type="submit">Hapus Playlist</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>

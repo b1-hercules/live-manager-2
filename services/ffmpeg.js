@@ -145,13 +145,17 @@ function buildVideoFilter(stream) {
 /**
  * Susun argumen FFmpeg lengkap.
  * @param {object} stream  baris streams (sudah di-hydrate)
- * @param {object} video   baris videos
+ * @param {object} source  baris videos, atau sumber playlist dari
+ *                         buildConcatSource() yang membawa concatPath
  * @param {Array}  urls    daftar URL RTMP tujuan (sudah lengkap dengan key)
  */
-function buildArgs(stream, video, urls) {
+function buildArgs(stream, source, urls) {
   if (!urls.length) throw new Error('Tidak ada tujuan RTMP');
 
-  const hasAudio = video.has_audio !== 0 && video.has_audio !== false;
+  // Playlist memakai concat demuxer; sisanya (codec, filter, output) identik
+  // dengan siaran video tunggal.
+  const concatPath = source.concatPath || null;
+  const hasAudio = source.has_audio !== 0 && source.has_audio !== false;
   const reencode = stream.encode_mode === 'reencode';
   // -stats tetap mencetak baris progres meski loglevel warning; baris itulah
   // yang dibaca streamManager untuk menampilkan fps/bitrate real-time.
@@ -162,8 +166,14 @@ function buildArgs(stream, video, urls) {
   // siaran loop panjang sering putus karena PTS mundur.
   args.push('-fflags', '+genpts');
   args.push('-re');
+  // Pada playlist, -stream_loop mengulang seluruh daftar, bukan satu berkas.
   if (stream.loop_video) args.push('-stream_loop', '-1');
-  args.push('-i', video.filepath);
+  if (concatPath) {
+    // -safe 0 diperlukan karena daftar berisi path absolut.
+    args.push('-f', 'concat', '-safe', '0', '-i', concatPath);
+  } else {
+    args.push('-i', source.filepath);
+  }
 
   // Platform menolak siaran tanpa track audio, jadi sediakan audio senyap.
   // `-re` di sini WAJIB: anullsrc adalah sumber tak berhingga, dan tanpa
@@ -209,7 +219,7 @@ function buildArgs(stream, video, urls) {
     videoCopied = true;
     // Copy video saja; audio tetap di-encode kalau sumbernya bukan AAC atau
     // kalau kita memakai anullsrc.
-    if (hasAudio && isFlvSafeAudio(video.audio_codec)) {
+    if (hasAudio && isFlvSafeAudio(source.audio_codec)) {
       args.push('-c:a', 'copy');
       audioCopied = true;
     } else {
@@ -253,6 +263,123 @@ function buildArgs(stream, video, urls) {
 
 function isFlvSafeAudio(codec) {
   return ['aac', 'mp3'].includes(String(codec || '').toLowerCase());
+}
+
+// --------------------------------------------------------------- playlist
+
+/**
+ * Di dalam daftar concat, kutip tunggal ditulis sebagai '\'' — ia menutup
+ * literal, menyisipkan kutip yang di-escape, lalu membukanya lagi.
+ */
+function escapeConcatPath(absPath) {
+  // FFmpeg menerima garis miring maju di Windows, dan itu menghindari
+  // kebingungan antara pemisah direktori dengan karakter escape.
+  return absPath.split(path.sep).join('/').replace(/'/g, "'\\''");
+}
+
+/**
+ * Tulis daftar concat untuk sebuah playlist dan kembalikan sumber yang bisa
+ * dipakai buildArgs. Berkas daftarnya berumur sependek siaran itu sendiri;
+ * streamManager yang menghapusnya lewat cleanupConcatFile().
+ *
+ * Codec diambil dari item pertama — aman karena playlist yang tidak seragam
+ * ditolak oleh playlistWarnings() sebelum siaran dimulai.
+ */
+function buildConcatSource(streamId, items) {
+  if (!items.length) throw new Error('Playlist kosong');
+
+  const lines = items
+    .map((item) => `file '${escapeConcatPath(path.resolve(config.root, item.filepath))}'`)
+    .join('\n');
+  const concatPath = path.join(config.paths.tmp, `playlist_${streamId}.txt`);
+  fs.writeFileSync(concatPath, `${lines}\n`, 'utf8');
+
+  const first = items[0];
+  return {
+    concatPath,
+    has_audio: first.has_audio,
+    audio_codec: first.audio_codec,
+    duration: items.reduce((total, item) => total + (Number(item.duration) || 0), 0),
+  };
+}
+
+function cleanupConcatFile(streamId) {
+  try {
+    fs.unlinkSync(path.join(config.paths.tmp, `playlist_${streamId}.txt`));
+  } catch (_) { /* tidak pernah dibuat atau sudah dihapus */ }
+}
+
+/**
+ * Peringatan khusus playlist. Concat demuxer menyambung potongan tanpa
+ * menormalkannya: kalau spesifikasi antar video berbeda di mode Copy, hasilnya
+ * bukan sekadar kurang rapi — frame berukuran lain masuk ke stream yang sudah
+ * terlanjur dideklarasikan, dan pemutar maupun platform akan menolaknya.
+ * Mode re-encode menormalkan gambar, tapi sambungannya tetap bisa tersendat.
+ */
+function playlistWarnings(stream, items) {
+  const warnings = [];
+  if (!items.length) return ['Playlist belum berisi video.'];
+
+  const differs = (key) => new Set(items.map((i) => i[key])).size > 1;
+  const copyMode = stream.encode_mode !== 'reencode';
+
+  if (differs('width') || differs('height')) {
+    const sizes = [...new Set(items.map((i) => `${i.width}×${i.height}`))].join(', ');
+    warnings.push(
+      copyMode
+        ? `Resolusi antar video berbeda (${sizes}). Di mode Copy ini menghasilkan siaran rusak — samakan resolusinya atau pakai mode Re-encode.`
+        : `Resolusi antar video berbeda (${sizes}). Mode Re-encode akan menyeragamkannya, tapi perpindahan antar video bisa tersendat sesaat.`
+    );
+  }
+
+  if (copyMode && differs('video_codec')) {
+    const codecs = [...new Set(items.map((i) => (i.video_codec || '?').toUpperCase()))].join(', ');
+    warnings.push(`Codec video berbeda (${codecs}). Mode Copy tidak bisa menyambungnya — pakai mode Re-encode.`);
+  }
+
+  // Sebagian video punya audio dan sebagian tidak: track audio akan hilang
+  // timbul di tengah siaran, dan itu memutus koneksi di banyak platform.
+  if (differs('has_audio')) {
+    warnings.push('Sebagian video punya audio dan sebagian tidak. Samakan dulu, atau siaran akan terputus saat berpindah video.');
+  }
+
+  if (copyMode && differs('audio_codec') && !differs('has_audio')) {
+    warnings.push('Codec audio antar video berbeda. Di mode Copy ini bisa membuat audio hilang setelah video pertama.');
+  }
+
+  if (copyMode && differs('fps')) {
+    const rates = [...new Set(items.map((i) => Math.round(i.fps || 0)))].join(', ');
+    warnings.push(`FPS antar video berbeda (${rates}). Perpindahan bisa tersendat; mode Re-encode menyeragamkannya.`);
+  }
+
+  return warnings;
+}
+
+/** Apakah playlist ini aman disiarkan dengan pengaturan stream sekarang. */
+function playlistBlockers(stream, items) {
+  if (!items.length) return ['Playlist belum berisi video.'];
+
+  const differs = (key) => new Set(items.map((i) => i[key])).size > 1;
+  const blockers = [];
+
+  // Berlaku di kedua mode: re-encode menyeragamkan gambar, tapi tidak bisa
+  // memunculkan track audio yang memang tidak ada di sebagian berkas. Susunan
+  // stream berubah di tengah siaran, dan platform memutus koneksi.
+  if (differs('has_audio')) {
+    blockers.push('Sebagian video tidak punya audio — siaran akan terputus saat berpindah video.');
+  }
+
+  // Sisanya khusus mode Copy; re-encode menormalkan resolusi dan codec.
+  if (stream.encode_mode !== 'reencode') {
+    if (differs('width') || differs('height')) {
+      blockers.push('Resolusi antar video berbeda — di mode Copy siaran akan rusak.');
+    }
+    if (differs('video_codec')) {
+      blockers.push('Codec video antar video berbeda — mode Copy tidak bisa menyambungnya.');
+    }
+  }
+
+  return blockers;
 }
 
 /**
@@ -317,5 +444,6 @@ module.exports = {
   ffmpegPath, ffprobePath, checkAvailability,
   probe, generateThumbnail,
   buildArgs, buildVideoFilter, compatibilityWarnings,
+  buildConcatSource, cleanupConcatFile, playlistWarnings, playlistBlockers,
   spawnStream, previewCommand, escapeTee,
 };

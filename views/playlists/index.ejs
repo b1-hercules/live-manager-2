@@ -1,0 +1,63 @@
+<% layout('layouts/main') %>
+
+<div class="card mb-2">
+  <div class="card-head">
+    <h2>Playlist Baru</h2>
+    <span class="sub">beberapa video diputar berurutan dalam satu siaran</span>
+  </div>
+  <div class="card-body">
+    <form method="post" action="/playlists">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="form-grid">
+        <div class="field">
+          <label for="name">Nama Playlist</label>
+          <input id="name" name="name" type="text" required maxlength="120" placeholder="Musik Lo-fi 24 Jam">
+        </div>
+        <div class="field">
+          <label for="description">Catatan <span class="text-mute">(opsional)</span></label>
+          <input id="description" name="description" type="text" maxlength="500">
+        </div>
+      </div>
+      <button class="btn btn-primary" type="submit">
+        <%- include('../partials/icon', { name: 'plus' }) %> Buat Playlist
+      </button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Playlist <span class="sub">· <%= playlists.length %></span></h2>
+  </div>
+
+  <% if (!playlists.length) { %>
+    <div class="empty">
+      <div class="empty-icon"><%- include('../partials/icon', { name: 'list' }) %></div>
+      <h3>Belum ada playlist</h3>
+      <p>
+        Playlist berguna kalau kamu ingin siaran panjang tanpa mengulang satu video yang sama.
+        Untuk siaran 24 jam, beberapa video berdurasi panjang lebih enak ditonton
+        daripada satu video pendek yang diputar berkali-kali.
+      </p>
+    </div>
+  <% } else { %>
+    <div class="card-body tight">
+      <% playlists.forEach(function (p) { %>
+        <div class="item-row">
+          <span class="idx"><%- include('../partials/icon', { name: 'list' }) %></span>
+          <div class="body">
+            <div class="t"><a href="/playlists/<%= p.id %>"><%= p.name %></a></div>
+            <% if (p.description) { %><div class="d"><%= p.description %></div><% } %>
+            <div class="text-xs text-mute mt-1">
+              <%= p.item_count %> video · total <%= formatDuration(p.total_duration) %>
+              <% if (p.shuffle) { %> · <span class="badge badge-accent">acak</span><% } %>
+            </div>
+          </div>
+          <div class="nowrap">
+            <a href="/playlists/<%= p.id %>" class="btn btn-sm">Kelola</a>
+          </div>
+        </div>
+      <% }); %>
+    </div>
+  <% } %>
+</div>

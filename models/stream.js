@@ -33,9 +33,12 @@ function listByUser(userId) {
         v.duration AS video_duration, v.width AS video_width, v.height AS video_height,
         p.name AS rotation_profile_name, p.mode AS rotation_mode,
         a.name AS youtube_account_name,
+        pl.name AS playlist_name,
+        (SELECT COUNT(*) FROM playlist_items pi WHERE pi.playlist_id = s.playlist_id) AS playlist_count,
         (SELECT COUNT(*) FROM stream_destinations sd WHERE sd.stream_id = s.id) AS destination_count
        FROM streams s
        LEFT JOIN videos v ON v.id = s.video_id
+       LEFT JOIN playlists pl ON pl.id = s.playlist_id
        LEFT JOIN rotation_profiles p ON p.id = s.rotation_profile_id
        LEFT JOIN accounts a ON a.id = s.youtube_account_id
        WHERE s.user_id = ? ORDER BY
@@ -54,9 +57,12 @@ function findById(id, userId = null) {
         v.width AS video_width, v.height AS video_height, v.has_audio AS video_has_audio,
         v.video_codec AS video_codec, v.audio_codec AS audio_codec,
         p.name AS rotation_profile_name, p.mode AS rotation_mode,
-        a.name AS youtube_account_name
+        a.name AS youtube_account_name,
+        pl.name AS playlist_name,
+        (SELECT COUNT(*) FROM playlist_items pi WHERE pi.playlist_id = s.playlist_id) AS playlist_count
        FROM streams s
        LEFT JOIN videos v ON v.id = s.video_id
+       LEFT JOIN playlists pl ON pl.id = s.playlist_id
        LEFT JOIN rotation_profiles p ON p.id = s.rotation_profile_id
        LEFT JOIN accounts a ON a.id = s.youtube_account_id
        WHERE s.id = ?`
@@ -101,9 +107,17 @@ function listRotating() {
 }
 
 function normalize(data) {
+  // Sumber siaran hanya boleh satu: video tunggal atau playlist. Form mengirim
+  // keduanya (yang tidak dipilih bernilai kosong), jadi penentuannya di sini —
+  // playlist menang, dan video_id dikosongkan supaya tidak ada sisa yang
+  // membingungkan saat sumbernya diganti.
+  const playlistId = data.playlist_id ? toInt(data.playlist_id) : null;
+  const videoId = data.video_id ? toInt(data.video_id) : null;
+
   return {
     title: String(data.title || 'Live Stream').trim().slice(0, 150),
-    video_id: data.video_id ? toInt(data.video_id) : null,
+    video_id: playlistId ? null : videoId,
+    playlist_id: playlistId,
     encode_mode: data.encode_mode === 'reencode' ? 'reencode' : 'copy',
     resolution: RESOLUTIONS[data.resolution] ? data.resolution : 'source',
     orientation: data.orientation === 'portrait' ? 'portrait' : 'landscape',
@@ -134,11 +148,11 @@ function create(userId, data, destinationIds = []) {
     const info = db
       .prepare(
         `INSERT INTO streams
-          (user_id, title, video_id, encode_mode, resolution, orientation, bitrate, audio_bitrate,
+          (user_id, title, video_id, playlist_id, encode_mode, resolution, orientation, bitrate, audio_bitrate,
            fps, preset, loop_video, auto_restart, status, schedule_start_at, schedule_end_at,
            duration_minutes, rotation_profile_id, rotation_enabled, rotate_on_start,
            youtube_account_id, youtube_video_id, youtube_auto_detect, created_at, updated_at)
-         VALUES (@user_id, @title, @video_id, @encode_mode, @resolution, @orientation, @bitrate,
+         VALUES (@user_id, @title, @video_id, @playlist_id, @encode_mode, @resolution, @orientation, @bitrate,
            @audio_bitrate, @fps, @preset, @loop_video, @auto_restart, @status, @schedule_start_at,
            @schedule_end_at, @duration_minutes, @rotation_profile_id, @rotation_enabled,
            @rotate_on_start, @youtube_account_id, @youtube_video_id, @youtube_auto_detect,
@@ -157,7 +171,8 @@ function update(id, userId, data, destinationIds = null) {
   const payload = normalize(data);
   db.transaction(() => {
     db.prepare(
-      `UPDATE streams SET title = @title, video_id = @video_id, encode_mode = @encode_mode,
+      `UPDATE streams SET title = @title, video_id = @video_id, playlist_id = @playlist_id,
+        encode_mode = @encode_mode,
         resolution = @resolution, orientation = @orientation, bitrate = @bitrate,
         audio_bitrate = @audio_bitrate, fps = @fps, preset = @preset, loop_video = @loop_video,
         auto_restart = @auto_restart, schedule_start_at = @schedule_start_at,
