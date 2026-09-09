@@ -5,6 +5,7 @@ const config = require('../config');
 const accountModel = require('../models/account');
 const settings = require('../models/settings');
 const youtube = require('../services/youtube');
+const apiHealth = require('../services/apiHealth');
 const { requireAuth } = require('../middleware/auth');
 const { randomToken, safeEqual } = require('../utils/crypto');
 const { createLogger } = require('../utils/logger');
@@ -113,6 +114,28 @@ router.post('/:id/test', async (req, res) => {
     });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err.message, reason: err.reason });
+  }
+});
+
+/**
+ * Periksa ketiga API Google yang dipakai aplikasi ini. Berbeda dari /test di
+ * atas: yang itu menjawab "adakah siaran aktif", yang ini menjawab "apakah
+ * otorisasi dan API-nya masih sehat" — dan membedakan token mati dari API yang
+ * belum diaktifkan dari kuota yang habis.
+ *
+ * Selalu 200: hasil "gagal" adalah jawaban yang sah dari sebuah pemeriksaan,
+ * bukan galat HTTP. Yang 4xx/5xx hanya kalau pemeriksaannya sendiri tidak bisa
+ * dijalankan.
+ */
+router.post('/:id/health', async (req, res, next) => {
+  const account = accountModel.findById(req.params.id, req.user.id);
+  if (!account) return res.status(404).json({ ok: false, error: 'Akun tidak ditemukan' });
+
+  try {
+    return res.json(await apiHealth.checkAccount(account));
+  } catch (err) {
+    log.error('Pemeriksaan API gagal dijalankan', err);
+    return next(err);
   }
 });
 

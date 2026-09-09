@@ -304,6 +304,65 @@ const MIGRATIONS = [
       ALTER TABLE streams ADD COLUMN playlist_id INTEGER REFERENCES playlists(id) ON DELETE SET NULL;
     `);
   },
+
+  // ------------------------------------- v5: berkas audio sebagai sumber siaran
+  //
+  // Catatan penomoran: elemen v4 di atas ditulis sebagai arrow function tanpa
+  // nama. Jangan menghitung migrasi dengan `grep "function v"` — hitungannya
+  // akan kurang satu, dan menyisipkan langkah bernomor salah membuat migrasi
+  // dilewati diam-diam di database lama sementara tetap jalan di instalasi baru.
+  // Hitung panjang array-nya, bukan deklarasi bernamanya.
+  function v5(d) {
+    d.exec(`
+      -- Satu daftar berkas untuk video DAN musik. Alternatifnya tabel terpisah,
+      -- yang berarti mengembarkan unggah berpotongan, impor Drive, akuntansi
+      -- disk, dan seluruh UI playlist — sekitar 1.440 baris yang sudah teruji.
+      -- Harga dari keputusan ini: 'kind' WAJIB disaring di tiga tempat
+      -- (galeri video, pemilih sumber stream, pemilih isi playlist), kalau tidak
+      -- berkas musik bocor ke daftar video.
+      ALTER TABLE videos ADD COLUMN kind TEXT NOT NULL DEFAULT 'video';
+      ALTER TABLE playlists ADD COLUMN kind TEXT NOT NULL DEFAULT 'video';
+
+      -- DEFAULT 'video' membuat seluruh baris lama benar tanpa disentuh.
+      CREATE INDEX idx_videos_user_kind ON videos(user_id, kind);
+    `);
+  },
+
+  // ------------------------------------------------- v6: siaran ala radio
+  function v6(d) {
+    d.exec(`
+      -- Gambar latar milik SATU siaran, bukan pustaka bersama. Sengaja tabel
+      -- sendiri, bukan baris di tabel videos: gambar tidak punya durasi, fps,
+      -- atau codec yang perlu dibaca, jadi probe() tidak perlu disentuh sama
+      -- sekali dan kolom kind tetap dua nilai saja.
+      CREATE TABLE stream_backgrounds (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        stream_id  INTEGER NOT NULL REFERENCES streams(id) ON DELETE CASCADE,
+        filepath   TEXT NOT NULL,
+        position   INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_streambg_stream ON stream_backgrounds(stream_id, position);
+
+      -- Setelan spektrum, semuanya bernilai bawaan yang masuk akal supaya
+      -- siaran radio bisa dimulai tanpa menyentuh satu pun setelan ini.
+      --
+      -- spectrum_x NULL berarti "di tengah secara mendatar". Disimpan sebagai
+      -- INTEGER, bukan ekspresi ffmpeg seperti (W-w)/2: nilai ini masuk ke
+      -- filtergraph, jadi ia harus berupa angka yang bisa divalidasi, bukan
+      -- teks bebas yang bisa menyelundupkan filter lain.
+      ALTER TABLE streams ADD COLUMN spectrum_mode TEXT NOT NULL DEFAULT 'bar';
+      ALTER TABLE streams ADD COLUMN spectrum_x INTEGER;
+      ALTER TABLE streams ADD COLUMN spectrum_y INTEGER NOT NULL DEFAULT 15;
+      ALTER TABLE streams ADD COLUMN spectrum_width INTEGER NOT NULL DEFAULT 480;
+      ALTER TABLE streams ADD COLUMN spectrum_height INTEGER NOT NULL DEFAULT 130;
+      ALTER TABLE streams ADD COLUMN spectrum_color TEXT NOT NULL DEFAULT '#00FF88';
+      ALTER TABLE streams ADD COLUMN spectrum_mirror INTEGER NOT NULL DEFAULT 0;
+
+      -- Berapa lama satu gambar latar bertahan sebelum berganti.
+      ALTER TABLE streams ADD COLUMN background_rotate_minutes INTEGER NOT NULL DEFAULT 120;
+    `);
+  },
 ];
 
 function migrate() {

@@ -65,12 +65,17 @@
               </div>
               <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
                 <button class="btn btn-sm" type="button" data-test-account="<%= a.id %>">Tes Koneksi</button>
+                <button class="btn btn-sm" type="button" data-health-account="<%= a.id %>">Cek API</button>
                 <form method="post" action="/accounts/<%= a.id %>/delete"
                       data-confirm="Putuskan channel &quot;<%= a.name %>&quot;? Rotasi pada stream yang memakainya akan berhenti.">
                   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                   <button class="btn btn-danger btn-sm" type="submit">Putuskan</button>
                 </form>
               </div>
+            </div>
+            <div class="item-row" style="border-top:0;padding-top:0;display:none" data-health-panel="<%= a.id %>">
+              <span class="idx" style="opacity:0"></span>
+              <div class="body"></div>
             </div>
             <div class="item-row" style="border-top:0;padding-top:0">
               <span class="idx" style="opacity:0"></span>
@@ -159,6 +164,66 @@
         LM.toast(res.message, 'success');
       } catch (err) {
         LM.toast(err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    });
+  });
+
+  // Cek API: render hasil per-pemeriksaan di panel, bukan sekadar toast — bedanya
+  // token mati / API belum aktif / kuota habis justru ada di rincian itu.
+  var HEALTH_STYLE = {
+    ok:   { mark: "✓", color: "var(--ok, #22c55e)" },
+    warn: { mark: "!",       color: "var(--warn, #f59e0b)" },
+    fail: { mark: "✕", color: "var(--live, #ef4444)" },
+    skip: { mark: "–", color: "var(--muted, #94a3b8)" }
+  };
+
+  document.querySelectorAll("[data-health-account]").forEach(function (btn) {
+    btn.addEventListener("click", async function () {
+      var id = btn.dataset.healthAccount;
+      var panel = document.querySelector('[data-health-panel="' + id + '"]');
+      var body = panel.querySelector(".body");
+      btn.disabled = true;
+      var original = btn.textContent;
+      btn.textContent = "Memeriksa...";
+      try {
+        var res = await LM.post("/accounts/" + id + "/health");
+        body.textContent = "";
+
+        var head = document.createElement("div");
+        head.className = "text-sm mb-1";
+        head.style.fontWeight = "600";
+        head.textContent = res.message;
+        body.appendChild(head);
+
+        res.checks.forEach(function (c) {
+          var style = HEALTH_STYLE[c.status] || HEALTH_STYLE.skip;
+          var row = document.createElement("div");
+          row.className = "text-xs";
+          row.style.lineHeight = "1.7";
+
+          var mark = document.createElement("span");
+          mark.textContent = style.mark + " ";
+          mark.style.color = style.color;
+          mark.style.fontWeight = "700";
+
+          var label = document.createElement("strong");
+          label.textContent = c.label + ": ";
+
+          var msg = document.createElement("span");
+          msg.className = "text-mute";
+          msg.textContent = c.message;
+
+          row.appendChild(mark); row.appendChild(label); row.appendChild(msg);
+          body.appendChild(row);
+        });
+
+        panel.style.display = "";
+        LM.toast(res.message, res.ok ? "success" : "error");
+      } catch (err) {
+        LM.toast(err.message, "error");
       } finally {
         btn.disabled = false;
         btn.textContent = original;

@@ -289,8 +289,11 @@ async function main() {
   server = rebooted.proc;
   const swept = await until('boot sweep', async () => !fs.existsSync(leftover), 15000);
   check('daftar sisa dihapus saat aplikasi boot', Boolean(swept), true);
+  // Dicocokkan pada bagian yang stabil saja. Sejak mode radio ada, penyapuan
+  // saat boot menghitung dua jenis berkas sekaligus — daftar concat playlist
+  // video DAN berkas radio — sehingga pesannya tidak lagi menyebut "playlist".
   check('pembersihannya dicatat di log',
-    /daftar playlist sisa siaran sebelumnya dihapus/.test(rebooted.logs.join('')), true);
+    /sisa siaran sebelumnya dihapus/.test(rebooted.logs.join('')), true);
 }
 
 main()

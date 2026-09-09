@@ -5,24 +5,39 @@ const path = require('path');
 const { db, now } = require('../db');
 const config = require('../config');
 
-function listByUser(userId, { search = '', limit = 200, offset = 0 } = {}) {
-  if (search) {
-    return db
-      .prepare(
-        `SELECT * FROM videos WHERE user_id = ? AND title LIKE ?
-         ORDER BY created_at DESC LIMIT ? OFFSET ?`
-      )
-      .all(userId, `%${search}%`, limit, offset);
-  }
+/**
+ * Tabel ini menampung video DAN berkas musik, dibedakan kolom `kind`. Karena
+ * itu setiap daftar yang ditampilkan ke pengguna WAJIB menyebut jenisnya —
+ * kalau lupa, berkas musik bocor ke galeri video dan ke pemilih sumber siaran.
+ *
+ * `kind: null` berarti sengaja tidak disaring (mis. penghitungan disk, yang
+ * memang harus mencakup semuanya).
+ */
+function listByUser(userId, { search = '', limit = 200, offset = 0, kind = 'video' } = {}) {
+  const where = ['user_id = ?'];
+  const args = [userId];
+  if (kind !== null) { where.push('kind = ?'); args.push(kind); }
+  if (search) { where.push('title LIKE ?'); args.push(`%${search}%`); }
+
   return db
-    .prepare('SELECT * FROM videos WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?')
-    .all(userId, limit, offset);
+    .prepare(
+      `SELECT * FROM videos WHERE ${where.join(' AND ')}
+       ORDER BY created_at DESC LIMIT ? OFFSET ?`
+    )
+    .all(...args, limit, offset);
 }
 
-function countByUser(userId) {
-  return db.prepare('SELECT COUNT(*) AS n FROM videos WHERE user_id = ?').get(userId).n;
+function countByUser(userId, { kind = 'video' } = {}) {
+  if (kind === null) {
+    return db.prepare('SELECT COUNT(*) AS n FROM videos WHERE user_id = ?').get(userId).n;
+  }
+  return db.prepare('SELECT COUNT(*) AS n FROM videos WHERE user_id = ? AND kind = ?').get(userId, kind).n;
 }
 
+/**
+ * Sengaja TIDAK menyaring `kind`: berkas musik memakan ruang disk sama
+ * nyatanya dengan video, dan angka ini menjawab "berapa disk yang terpakai".
+ */
 function totalSize(userId) {
   return db.prepare('SELECT COALESCE(SUM(filesize), 0) AS n FROM videos WHERE user_id = ?').get(userId).n;
 }
@@ -40,11 +55,11 @@ function create(data) {
       `INSERT INTO videos
         (user_id, title, filename, filepath, thumbnail_path, filesize, duration,
          width, height, fps, video_codec, audio_codec, bitrate, has_audio,
-         source, status, created_at, updated_at)
+         source, status, kind, created_at, updated_at)
        VALUES
         (@user_id, @title, @filename, @filepath, @thumbnail_path, @filesize, @duration,
          @width, @height, @fps, @video_codec, @audio_codec, @bitrate, @has_audio,
-         @source, @status, @created_at, @updated_at)`
+         @source, @status, @kind, @created_at, @updated_at)`
     )
     .run({
       user_id: data.user_id,
@@ -63,6 +78,8 @@ function create(data) {
       has_audio: data.has_audio === false ? 0 : 1,
       source: data.source || 'upload',
       status: data.status || 'ready',
+      // Diisi probe() dari isi berkas, bukan dari ekstensi atau dari jalur unggah.
+      kind: data.kind === 'audio' ? 'audio' : 'video',
       created_at: now(),
       updated_at: now(),
     });

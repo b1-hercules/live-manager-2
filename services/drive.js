@@ -25,7 +25,11 @@ function hasAccess(account) {
 }
 
 function clientFor(account) {
-  return google.drive({ version: 'v3', auth: youtube.clientForAccount(account) });
+  // authClientForAccount(), bukan clientForAccount(): yang kedua mengembalikan
+  // objek layanan YouTube, dan googleapis menerimanya tanpa protes saat
+  // dibangun — setiap panggilan Drive baru gagal belakangan dengan
+  // "authClient.request is not a function".
+  return google.drive({ version: 'v3', auth: youtube.authClientForAccount(account) });
 }
 
 /** Tanda kutip tunggal mengakhiri literal di bahasa query Drive, jadi harus dilolosi. */
@@ -104,4 +108,7 @@ async function download(account, fileId, destPath, { onProgress, signal } = {}) 
   return { bytes: received };
 }
 
-module.exports = { SCOPE, hasAccess, listVideos, fileInfo, download };
+// clientFor ikut diekspor supaya tes bisa memastikan `auth` yang terpasang
+// benar-benar klien OAuth. Kesalahan di sini pernah lolos sepenuhnya karena
+// googleapis baru mengeluhkannya pada panggilan pertama, bukan saat dibangun.
+module.exports = { SCOPE, hasAccess, clientFor, listVideos, fileInfo, download };

@@ -84,10 +84,13 @@ async function exchangeCode(code) {
 }
 
 /**
- * Bangun client terautentikasi untuk sebuah akun. Token hasil refresh langsung
- * disimpan kembali supaya siaran 24/7 tidak pernah kehabisan access token.
+ * Klien OAuth mentah untuk sebuah akun. Token hasil refresh langsung disimpan
+ * kembali supaya siaran 24/7 tidak pernah kehabisan access token.
+ *
+ * Ini yang harus dioper sebagai `auth` ke google.youtube()/google.drive() —
+ * bukan objek layanan hasil salah satunya.
  */
-function clientForAccount(account) {
+function authClientForAccount(account) {
   if (!account?.refresh_token) {
     throw new YouTubeError(
       `Akun "${account?.name || 'YouTube'}" tidak punya refresh token. Hubungkan ulang akunnya.`,
@@ -115,7 +118,19 @@ function clientForAccount(account) {
     }
   });
 
-  return google.youtube({ version: 'v3', auth: client });
+  return client;
+}
+
+/**
+ * Objek layanan YouTube untuk sebuah akun.
+ *
+ * Klien OAuth-nya dibangun di authClientForAccount(), bukan di sini, karena
+ * Drive membutuhkan klien auth itu sendiri. Mengoper objek layanan YouTube
+ * sebagai `auth` tidak melempar saat dibangun — kegagalannya baru muncul di
+ * panggilan pertama sebagai "authClient.request is not a function".
+ */
+function clientForAccount(account) {
+  return google.youtube({ version: 'v3', auth: authClientForAccount(account) });
 }
 
 // ------------------------------------------------------------ operasi API
@@ -284,6 +299,17 @@ function wrapError(err, account) {
     );
   }
 
+  // API belum diaktifkan di project Google Cloud. Gejalanya 403 seperti izin
+  // ditolak, tapi penyebabnya beda total dan perbaikannya ada di Cloud Console,
+  // bukan di aplikasi ini — jadi dipisahkan sebelum cabang 403 umum.
+  if (reason === 'accessNotConfigured' || reason === 'SERVICE_DISABLED' ||
+      /has not been used in project|is disabled/i.test(message)) {
+    return new YouTubeError(
+      `API yang dipakai belum diaktifkan di project Google Cloud kamu: ${message}`,
+      { reason: 'access_not_configured', fatal: true, status }
+    );
+  }
+
   if (reason === 'forbidden' || status === 403) {
     return new YouTubeError(
       `Ditolak YouTube: ${message}. Untuk thumbnail kustom, channel harus terverifikasi terlebih dahulu.`,
@@ -299,7 +325,7 @@ function wrapError(err, account) {
 }
 
 module.exports = {
-  SCOPES, YouTubeError,
-  getAuthUrl, exchangeCode, clientForAccount,
+  SCOPES, YouTubeError, wrapError,
+  getAuthUrl, exchangeCode, clientForAccount, authClientForAccount,
   detectActiveBroadcast, updateMetadata, setThumbnail, getVideoSnapshot,
 };

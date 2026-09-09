@@ -11,9 +11,263 @@ _(kosong — gap yang disepakati sudah dikerjakan)_
 - ~~Impor dari Mega.nz~~ — **di-skip atas keputusan user (2026-09-01)**. Google Drive sudah cukup sebagai sumber cloud. Kalau suatu saat dibutuhkan: wajib dependency `megajs`, sebab protokol Mega memakai enkripsi sisi klien sendiri — tidak ada jalan "tulis sendiri" yang wajar seperti pada disk/bandwidth/TUS.
 
 ## IN PROGRESS
-_(kosong)_
+
+### Siaran ala radio (musik + gambar + spektrum) — dirancang 2026-09-10
+
+Diminta user: siaran dari daftar musik, bukan berkas video jadi, dengan latar
+gambar bergantian dan overlay spektrum audio yang **letak dan ukurannya bisa
+diatur**. Syarat mutlak: siaran MP4 yang sudah ada **harus tetap jalan** — ini
+mode ketiga yang hidup berdampingan, bukan penggantian mesin.
+
+**Lapisan media: SELESAI** (lihat DONE). **Mesin siaran: belum dikodekan.**
+
+#### Cetak biru diambil dari proyek yang sudah terbukti
+
+User menunjuk `D:LIVE-v2morning-stillness-live-v2` — liquidsoap + ffmpeg
+yang sudah berjalan berjam-jam di produksi. Membaca `config/radio.liq` dan
+`scripts/stream.sh` di sana **mengoreksi rancangan awal saya** dan menjawab
+seluruh pertanyaan terbuka. Jangan merancang ulang dari nol; sadur dari sana.
+
+**KOREKSI TERPENTING — harbor, bukan selang.** Rancangan awal saya
+menyambungkan liquidsoap ke FFmpeg lewat pipe stdout→stdin. Itu salah untuk
+siaran 24/7. Yang terbukti memakai `output.harbor` (server HTTP kecil di dalam
+liquidsoap sendiri, bukan Icecast terpisah), dan FFmpeg membacanya dengan:
+
+    -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i http://127.0.0.1:PORT/...
+
+Kalau liquidsoap tersendat atau restart, FFmpeg **menyambung ulang sendiri**.
+Selang tidak bisa: pipe putus = FFmpeg mati. Inilah jawaban sesungguhnya atas
+"kenapa tahan berjam-jam" — pilihan rancangan, bukan keberuntungan. Harganya
+audio dikemas ulang jadi MP3 192k di tengah; ketahanan lebih berharga daripada
+satu generasi kompresi di sini.
+
+#### Yang WAJIB disadur (tidak akan ditemukan dengan menebak)
+
+- `-thread_queue_size 512` pada input live
+- Latar gambar **di-pre-render jadi BMP** sekali, bukan dipakai sebagai PNG:
+  `-loop 1` membongkar ulang berkasnya SETIAP frame (24×/detik); BMP nyaris
+  sekadar salin memori
+- `eof_action=endall` pada overlay latar↔spektrum — tanpa ini, saat latar habis
+  sementara audio terus mengalir, FFmpeg membeku di frame terakhir selamanya
+- **Menyamakan fps pada setiap overlay yang di-loop** — jebakan pertumbuhan
+  memori ffmpeg (framesync menyulam dua clock berbeda melintasi tiap
+  `-stream_loop`). Ini inti ketahanan berjam-jam
+- liquidsoap: `mksafe` (sumber tidak mati saat gagal) dan
+  `normalize(target=-14.0)` (volume antar lagu rata)
+- Setelan spektrum yang sudah matang: `ascale=cbrt:fscale=log:averaging=2`,
+  `colorkey=0x000000:0.08:0.0` (toleransi 0.30 terlalu longgar),
+  `colorchannelmixer=aa=0.45`, dan mode cermin (crop separuh → hflip → hstack)
+- `colors` pada showfreqs menerima **daftar per kanal** (`0xRRGGBB|0xRRGGBB`),
+  bukan satu nilai — satu nilai diabaikan diam-diam, spektrum keluar putih
+
+#### Yang SENGAJA TIDAK dibawa (keputusan user, 2026-09-10)
+
+Perancah yang sudah ada padanan lebih baiknya di sini:
+
+| Proyek lama | Padanan di sini |
+|---|---|
+| `secrets/*.txt` kunci teks polos | terenkripsi di `destinations` |
+| `while true; sleep 5` | `handleExit`: backoff 5→120 dtk, maks 10× |
+| systemd unit per orientasi | kolom `orientation` + `RESOLUTIONS` |
+| `.env` + `layout.env` | database + halaman Pengaturan |
+| `web/app.py` (panel Flask) | aplikasi ini sendiri |
+| `bin/*.sh` | `streamManager` men-spawn langsung |
+
+Dan fitur yang **ditolak user secara eksplisit**: watchdog, teks "now playing",
+logo, CTA gif, VFX kilau, tombol Skip lewat telnet. Jangan diam-diam
+menambahkannya. Konsekuensi tanpa watchdog, disepakati: siaran yang macet di
+"preparing stream" (FFmpeg tetap mengirim, YouTube tidak live) tidak akan
+terdeteksi. Modalnya sudah ada (`detectActiveBroadcast`) kalau nanti berubah
+pikiran.
+
+Akibat pemangkasan itu skrip liquidsoap menyusut ~sepertiga dan rangkaian
+filter tinggal: latar → skala/crop → fps, spektrum → colorkey → overlay.
+
+#### Rancangan yang disepakati
+
+- **Sumber radio** = `streams.playlist_id` menunjuk playlist ber-`kind='audio'`.
+  Tidak perlu kolom pembeda baru; `models/stream.js` sudah JOIN `playlists`,
+  cukup ikut mengambil `pl.kind`.
+- **Gambar latar**: tabel baru `stream_backgrounds(stream_id, filepath, position)`
+  — keputusan user 2026-09-10. Memakai ulang `uploadThumbnails.array(...,30)` +
+  `verifyImageContent` yang sudah teruji, dan `probe()` tidak perlu disentuh
+  sama sekali (gambar tak punya durasi/fps/codec), sehingga `kind` tetap dua
+  nilai saja.
+- **Daftar lagu untuk liquidsoap** ditulis sebagai berkas daftar per-stream,
+  pola yang sama dengan `concatPathFor()`. Dengan `reload_mode="watch"`,
+  mengubah playlist lewat UI membuat berkas itu ditulis ulang dan liquidsoap
+  memungutnya **tanpa memutus siaran** — inilah janji yang membuat liquidsoap
+  dipilih. (`watch` berbasis notifikasi filesystem, bukan polling: nol kerja
+  saat tidak ada perubahan.)
+- **Urutan mematikan**: FFmpeg dulu, baru liquidsoap. Karena `-reconnect`,
+  membunuh liquidsoap lebih dulu hanya membuat FFmpeg berputar mencoba
+  menyambung.
+- **Port harbor** perlu dialokasikan per siaran dan tidak boleh bentrok.
+
+#### Kemajuan
+
+**Langkah 1-3 SELESAI (2026-09-10), teruji di Windows tanpa liquidsoap.**
+
+- **Migrasi v6** — tabel `stream_backgrounds(stream_id, filepath, position)` plus
+  kolom setelan spektrum di `streams` (`spectrum_mode`, `_x`, `_y`, `_width`,
+  `_height`, `_color`, `_mirror`) dan `background_rotate_minutes`. Semuanya
+  bernilai bawaan, jadi baris lama benar tanpa disentuh. `spectrum_x` NULL
+  berarti "di tengah mendatar".
+- **`services/liquidsoap.js` (baru)** — menyusun skrip .liq dan berkas daftar lagu
+  per siaran, alokasi port harbor, spawn, dan penyapuan berkas yatim (pola yang
+  sama dengan `sweepConcatFiles`). Harbor diikat ke 127.0.0.1; bawaan liquidsoap
+  0.0.0.0 akan membuat audio siaran bisa didengarkan siapa pun.
+- **`services/ffmpeg.js`** — `buildRadioArgs()` sebagai **fungsi baru terpisah**,
+  bukan cabang di dalam `buildArgs()`. Impact analysis `buildArgs` mengembalikan
+  **HIGH** (23 simbol; proses `startDueStreams`, `commandPreview`, `timer` — yaitu
+  start terjadwal, pratinjau, dan auto-restart). Menyisipkan cabang di sana berarti
+  mempertaruhkan seluruh siaran video demi fitur baru. Dibuktikan aman: md5 badan
+  `buildArgs` sebelum dan sesudah **identik** (`f6ff7f2cbd08378bd63f9a1428f5dcd3`).
+  Pemilihan jalur nanti dilakukan `streamManager` di langkah 4. Ikut ditambahkan:
+  `radioCanvas`, `buildSpectrumFilter`, `spectrumColor`, `buildBackgroundList`,
+  `prerenderBackground`, `cleanupBackgroundList`.
+- **`tests/test-radio.js` (baru)** — 37/37 pass. Liquidsoap tidak dibutuhkan:
+  harbor digantikan server HTTP yang lajunya dibatasi seperti MP3 192 kbps, dan
+  itulah yang membuat pengujian pacing berarti. Meliputi render sungguhan
+  (pergantian latar tepat waktu 4/4 termasuk setelah loop), ambang realtime, dan
+  kontrol senyap untuk membuktikan spektrum bereaksi pada audio.
+
+**Langkah 4 (streamManager mengawasi 2 proses) belum dikerjakan** — ini bagian
+paling berisiko; jalankan impact analysis dulu dan berhenti kalau HIGH/CRITICAL.
+Berikutnya lagi: UI, lalu Dockerfile.
+
+**Langkah 4 SELESAI (2026-09-10) — streamManager mengawasi dua proses.**
+
+- **`models/streamBackground.js` (baru)** — CRUD gambar latar per siaran.
+- **`services/streamManager.js`** — `isRadioStream()`, `resolveRadioSource()`,
+  `prepareRadioFiles()`, `cleanupRadioFiles()`, `cleanupStreamFiles()`,
+  `handleLiquidsoapOutput()`. Percabangan radio dipasang di `start()` dan
+  `commandPreview()`; `launch()` menjalankan liquidsoap lalu FFmpeg.
+
+  **`resolveSource()` TIDAK disentuh** — impact analysis atasnya HIGH (16 simbol;
+  proses `startDueStreams`, `commandPreview`, `timer`). Dibuktikan dengan
+  membandingkan isinya terhadap git, mengabaikan akhir-baris: IDENTIK. Begitu
+  pula `buildArgs()` di ffmpeg.js. Pola ini dipakai dua kali sekarang dan
+  terbukti: kalau sebuah simbol HIGH menghalangi, tambah fungsi baru dan
+  pindahkan percabangannya ke pemanggil — jangan menyisipkan cabang ke dalamnya.
+
+  Keputusan pengawasan proses yang perlu diingat:
+  - Liquidsoap mati duluan → FFmpeg ikut dimatikan, SENGAJA, supaya penanganannya
+    jatuh ke `handleExit` yang sudah ada berikut backoff-nya, bukan jalur baru.
+  - `handleExit` selalu mematikan liquidsoap di semua cabang; yang lama hanya
+    akan menahan port harbor-nya.
+  - FFmpeg gagal di-spawn → liquidsoap yang terlanjur hidup ikut dimatikan.
+  - Port harbor dipertahankan lintas auto-restart; kalau tidak, tiap putaran
+    restart membakar satu port baru sampai rentangnya habis.
+  - Log liquidsoap TIDAK boleh lewat `handleOutput`: penyaringnya mencatat setiap
+    baris bermuatan kata "error" ke database, dan liquidsoap rutin mencetaknya
+    saat berjalan normal.
+
+- **`tests/test-radio-manager.js` (baru)** — 26/26 pass.
+- **`tests/test-concat-cleanup.js` DISUNTING**: asersi pesan log saat boot
+  dilonggarkan ke bagian yang stabil. Penyapuan boot kini menghitung dua jenis
+  berkas (daftar concat video DAN berkas radio), jadi pesannya tidak lagi
+  menyebut "playlist". Ini satu-satunya tes lama yang diubah.
+
+**Berikutnya: UI (form siaran, unggah latar, setelan spektrum), lalu Dockerfile.**
+
+#### Sisa yang belum diverifikasi
+
+Hanya satu, dan bukan penghalang: pertambahan ukuran image Docker setelah
+`apt-get install liquidsoap` (menarik runtime OCaml). Diukur saat image dibuat.
 
 ## DONE
+
+### Lapisan media: berkas musik masuk ke daftar yang sama — 2026-09-09
+
+Fondasi untuk siaran ala radio, dan sepenuhnya berdiri sendiri: tidak ada
+liquidsoap di sini, semuanya teruji di Windows.
+
+**Keputusan user (2026-09-09): perluas tabel `videos`, bukan tabel terpisah.**
+Diambil setelah sensus, bukan perkiraan. Angkanya: jalur "perluas" menyentuh
+±11 titik (13 sentuhan SQL yang terpusat di 3 model, hanya **3** yang perlu
+disaring `kind`), sedangkan tabel terpisah berarti mengembarkan ±1.440 baris
+mesin teruji — chunkUpload (184), videoImport (139), videoIngest (48),
+models/playlist (138), routes/playlists (120), routes/videos (252), views (559).
+
+Harga dari keputusan ini, dicatat supaya tidak terlupa: `kind` **wajib**
+disaring di galeri video, pemilih sumber stream, dan pemilih isi playlist.
+
+- `db/migrate.js` — **migrasi v5**: `kind` di `videos` dan `playlists`
+  (`DEFAULT 'video'`, jadi seluruh baris lama benar tanpa disentuh), plus index
+  `idx_videos_user_kind(user_id, kind)`.
+- `utils/filetype.js` — 5 signature audio: MP3, FLAC, M4A, OGG, WAV.
+- `middleware/upload.js` — `verifyAudioContent`. Satu baris saja: validatornya
+  ternyata sudah ditulis sebagai pabrik `verifyContent(family, label)`.
+- `services/ffmpeg.js` `probe()` — menerima berkas tanpa track video,
+  mengembalikan `kind`. Kunci `width`/`height`/`fps` tetap ada bernilai 0 supaya
+  bentuk objek bagi pemanggil lama tidak berubah.
+- `services/videoIngest.js` — parameter `kind` (bawaan `'video'`), thumbnail
+  dilewati untuk musik.
+- `models/video.js` — `listByUser`/`countByUser` menyaring `kind` dengan
+  **bawaan `'video'`**, sehingga ketiga pemanggil lama otomatis benar tanpa
+  diubah sebaris pun; lupa menyaring berarti mendapat perilaku lama yang benar,
+  bukan kebocoran. `totalSize` sengaja TIDAK menyaring — musik memakan disk
+  sama nyatanya.
+
+**Impact analysis sebelum tiap simbol disentuh**: `probe` LOW (16 simbol, 2
+pemanggil langsung), `register` LOW (5 simbol, 3 pemanggil langsung).
+
+- Tes baru `tests/test-media-kind.js`, 30/30 pass, memakai berkas media nyata
+  hasil ffmpeg. **Dibuktikan bisa merah**: urutan signature M4A sengaja dibalik
+  ke setelah MP4/MOV, tes berbunyi (2 gagal), lalu dipulihkan.
+- Suite penuh 314 pass, 0 fail sebelum tes baru ditambahkan.
+
+### Pemeriksaan kesehatan API Google — 2026-09-09
+
+Diminta user: satu tombol yang menjawab "apakah Google OAuth, YouTube Data API
+v3, dan Drive API v3 masih valid". Pemicunya **manual saja** atas keputusan user
+(2026-09-09) — scheduler tidak disentuh, jadi tidak ada biaya kuota di latar
+belakang.
+
+**Bug yang ditemukan saat mengerjakannya: impor Drive tidak pernah berfungsi.**
+`services/drive.js` `clientFor()` mengoper hasil `youtube.clientForAccount()`
+sebagai `auth` ke `google.drive()`. Yang dioper itu **objek layanan YouTube**,
+bukan klien OAuth. googleapis menerimanya tanpa protes saat objeknya dibangun,
+sehingga kegagalannya baru muncul di panggilan pertama sebagai
+`authClient.request is not a function` — artinya `listVideos`, `fileInfo`, dan
+`download` semuanya mati sejak fitur Drive dirilis (2026-08-31). Lolos karena
+`tests/test-driveimport.js` menguji lapisan scope dan database saja, tidak
+pernah menyentuh auth.
+
+- `services/youtube.js` — `authClientForAccount()` dipisah dari
+  `clientForAccount()`. Yang pertama mengembalikan klien OAuth mentah; yang
+  kedua tetap mengembalikan objek layanan seperti sebelumnya, sehingga
+  rotationEngine dan route lama tidak ikut berubah. `wrapError()` mendapat
+  cabang `access_not_configured`, ditaruh **sebelum** cabang 403 umum supaya
+  "API belum diaktifkan di Cloud Console" tidak tersamar jadi "izin ditolak".
+  `wrapError` dan `authClientForAccount` diekspor.
+- `services/drive.js` — memakai `authClientForAccount()`. `clientFor` diekspor
+  supaya tes bisa memeriksa `auth` yang terpasang tanpa menyentuh jaringan.
+- `services/apiHealth.js` (baru) — empat pemeriksaan berurutan yang saling
+  menggugurkan: kredensial → token → YouTube → Drive. Kalau token mati, dua
+  yang terakhir ditandai **dilewati**, bukan gagal; kegagalan turunan itulah
+  yang membuat orang mengejar penyebab keliru. Kuota habis dipetakan ke `warn`,
+  bukan `fail` — API-nya sehat, jatahnya saja yang tandas.
+- `routes/accounts.js` — `POST /accounts/:id/health`. Selalu 200: hasil "gagal"
+  adalah jawaban sah dari sebuah pemeriksaan, bukan galat HTTP. `/test` lama
+  dibiarkan; ia menjawab pertanyaan berbeda (adakah siaran aktif).
+- `views/accounts/index.ejs` — tombol "Cek API" + panel rincian per-pemeriksaan.
+  Pesan dari Google ditulis lewat `textContent`, bukan `innerHTML`.
+
+**Impact analysis sebelum menyentuh simbol**: `clientForAccount` MEDIUM (24
+simbol, 6 pemanggil langsung, proses `runBundle`/`runIndependent`) — perubahannya
+murni ekstraksi, perilaku bagi pemanggil lama identik dan dijaga tes.
+`wrapError` LOW (13 simbol). `probe` LOW (16 simbol, 2 pemanggil langsung) —
+belum disentuh, dicatat untuk fitur musik nanti.
+
+- Tes baru `tests/test-apihealth.js`, 23/23 pass, murni (tanpa jaringan, tanpa
+  DB kerja). Termasuk penjagaan regresi langsung:
+  `drive.clientFor(...).context._options.auth` wajib instance OAuth2.
+  **Dibuktikan bisa gagal** — bug-nya sengaja dikembalikan, tes berbunyi
+  (2 gagal), lalu perbaikan dipulihkan. Tes regresi yang tidak pernah terbukti
+  merah tidak menjaga apa pun.
+- Suite penuh: 314 pass, 0 fail dari 14 berkas.
 
 ### Kebersihan daftar concat playlist — 2026-09-02
 Cacat yang tercatat di TODO pagi ini, sekarang ditutup. Yang paling mengganggu
@@ -336,3 +590,14 @@ Hasil investigasi gap-analysis (GitNexus query/FTS lagi degraded di mesin ini �
 - **FFmpeg memegang berkas daftar concat tetap terbuka selama siaran** (2026-09-02, diuji): `rm` pada berkas daftar di tengah siaran ditolak Windows dengan `Device or resource busy`, dan siaran tetap berjalan melewati putaran berikutnya. Konsekuensinya: pembersihan berkas daftar tidak boleh menyentuh siaran yang berjalan (di Windows memang mustahil, tapi jangan andalkan itu di Linux), dan `cleanupConcatFile` harus tetap menelan error — gagal menghapus bukan kondisi luar biasa.
 - **Status stream jangan dibaca dari HTML di dalam tes** (2026-09-02): halaman detail menampilkan baris log ber-level `ERROR` selagi siaran masih hidup, jadi mencocokkan kata "ERROR" di halaman membuat pemeriksaan lolos terlalu cepat — satu tes sempat gagal karena ini, bukan karena kodenya. Baca `streams.status` dari database lewat koneksi read-only.
 - **Tes tidak boleh dijalankan paralel** (2026-09-02): pola backup/restore DB membuat dua proses tes saling menimpa, dan port 7588–7599 dipakai bergantian. Gejalanya kegagalan yang tidak bisa diulang — satu berkas gagal di dalam suite, lulus penuh saat dijalankan sendirian. `tests/run.js` sekarang memasang kunci untuk mencegahnya; catatan lengkapnya di `tests/README.md`.
+- **googleapis menerima objek layanan sebagai `auth` tanpa protes** (2026-09-09, diuji): `google.drive({ auth: google.youtube(...) })` **tidak melempar** saat dibangun. Kegagalannya baru muncul di panggilan pertama, sebagai `authClient.request is not a function` — pesan yang tidak menyebut-nyebut penyebab sebenarnya. Akibatnya seluruh impor Drive mati diam-diam sejak 2026-08-31. Pelajaran untuk tes: memeriksa "modul bisa di-require" atau "objek klien terbentuk" tidak membuktikan apa pun soal auth. Yang membuktikan: `client.context._options.auth instanceof google.auth.OAuth2` — murah, tanpa jaringan, dan langsung merah kalau salah pasang. Selalu oper `authClientForAccount()`, jangan pernah `clientForAccount()`.
+- **`-stream_loop` gagal pada input concat tanpa track video** (2026-09-09, diuji): daftar concat berisi MP3 atau M4A yang dijalankan dengan `-stream_loop -1` berhenti setelah satu putaran dengan `Task finished with error code: -1 (Operation not permitted)`. Diuji dengan daftar 2×2 detik meminta 9 detik → keluar 4,0 detik. Sumber MP4 pada perintah yang sama **loop normal** (minta 11 detik dari daftar 4 detik → keluar 11,0 detik), jadi playlist video yang sudah ada tidak terdampak. Jalan keluar yang terbukti: gabungkan daftar jadi satu berkas dulu, baru `-stream_loop -1` pada berkas tunggal itu (keluar 9,0 detik sesuai permintaan). Relevan untuk fitur siaran musik; `-nostdin` wajib saat menguji di latar belakang, tanpa itu FFmpeg mati karena membaca stdin dan gejalanya menyerupai bug ini.
+- **Daftar concat dibaca sekali saja, tidak pernah dibaca ulang** (2026-09-09, diuji): playlist 2 video senyap di-loop tak-hingga, berkas daftar ditimpa di detik ke-8 dengan tambahan berkas bernada 1000 Hz. Rekaman 20 detik penuh tetap `mean_volume: -91.0 dB` dan `max_volume: -91.0 dB` — nada itu tidak pernah muncul, padahal loop-nya jelas berjalan (20 detik dari daftar 4 detik). FFmpeg mengurai berkas daftar saat membuka input; putaran berikutnya memakai salinan di memori. Konsekuensinya: **mengubah playlist saat siaran berjalan mustahil dengan concat demuxer** — satu-satunya cara adalah merestart proses, yang berarti siaran terputus. Ini alasan utama liquidsoap (`playlist(reload_mode="watch")`) dipertimbangkan untuk fitur siaran musik.
+- **Jangan hitung migrasi dengan `grep "function v"`** (2026-09-09, tertipu sendiri): migrasi v4 di `db/migrate.js` ditulis sebagai arrow function tanpa nama (`(d) => {`), sementara v1–v3 memakai `function vN(d)`. Grep saya menghitung 3, padahal array berisi 4, dan dari situ saya menyimpulkan (keliru) bahwa nomor versi pernah "terbakar". Database di `user_version = 4` sebetulnya konsisten sejak awal. Cara benar menghitungnya: evaluasi panjang array-nya. Kenapa ini penting: `migrate()` berhenti pada `current >= MIGRATIONS.length`, jadi menyisipkan langkah bernomor salah membuat migrasi **dilewati diam-diam di database lama sementara tetap jalan di instalasi baru** — diuji pada salinan: DB v4 + 4 migrasi → tidak ada yang jalan; DB v4 + 5 migrasi → v5 jalan; DB baru + 5 migrasi → v1..v5 jalan.
+- **Sampul album membuat MP3 terlihat seperti video** (2026-09-09, diuji): `ffprobe` atas MP3 bersampul melaporkan dua stream — `codec_type=audio` dan `codec_type=video, codec=mjpeg, disposition.attached_pic=1`. Tanpa menyaring `attached_pic`, `probe()` menemukan "track video", mencatat berkas musik sebagai video, dan mewarisi dimensi gambar sampulnya; siaran lalu memutar satu frame beku. Bug ini tidak terlihat sampai siaran sungguhan berjalan. Saringannya ada di `probe()` dan dijaga `tests/test-media-kind.js`.
+- **M4A dan MP4 sama-sama diawali atom `ftyp`** (2026-09-09, diuji): pembedanya hanya brand di offset 8 — `M4A ` versus `isom`. Karena `SIGNATURES` di `utils/filetype.js` dipakai dengan `.find()`, entri M4A **wajib** berada sebelum entri MP4/MOV; kalau dibalik, setiap berkas musik AAC lolos sebagai video. Sudah dibuktikan bisa merah: urutan sengaja dibalik → 2 tes gagal. Catatan serupa untuk MP3 tanpa tag ID3: syarat sync 11 bit (`b[0]===0xFF && (b[1]&0xE0)===0xE0`) sengaja ketat supaya tidak menyambar JPEG, yang juga diawali 0xFF.
+- **`-stream_loop` bekerja pada concat gambar** (2026-09-09, diuji): berbeda dari concat audio-only yang gagal. Slideshow `ffconcat` 3 gambar × 2 detik diminta 14 detik → keluar 14,0 detik, dan pergantian gambarnya tepat waktu pada 7 dari 7 sampel termasuk setelah loop. Polanya sekarang jelas: `-stream_loop` bekerja selama input punya track video. Mode radio memakai concat hanya untuk gambar, jadi jebakan audio-only itu terhindari.
+- **Rantai FFmpeg ala radio sudah terbukti utuh** (2026-09-09, diuji): audio dari `pipe:0` + slideshow + `showfreqs`/`showwaves` → `colorkey` → `overlay` menghasilkan H.264 + AAC yang benar. Spektrum terbukti tergambar (luma area overlay 170,5 saat berbunyi versus 100,7 saat senyap), dan `size=WxH` + `overlay=x:y` memang mengatur ukuran dan letaknya. Satu jebakan kosmetik: opsi `colors` pada `showfreqs` menerima **daftar warna per kanal dipisah `|`** (`0x00FF88|0x00FF88` untuk stereo), bukan satu nilai — satu nilai diabaikan diam-diam dan spektrumnya keluar putih.
+- **`-re` MEMATIKAN siaran radio; audio harbor yang memacunya** (2026-09-10, diukur): input latar mode radio adalah daftar ffconcat berisi satu entri per gambar dengan `duration = rotateMinutes * 60` — bawaannya 7200 detik. `-re` memacu input menurut timestamp-nya sendiri, jadi ia menunggu 7200 detik sebelum frame berikutnya. Diukur pada gambar BMP yang sama, meminta 8 detik keluaran dengan audio harbor tiruan berlaju realtime: **concat + `-re` tidak selesai dalam 33 detik**, sedangkan **concat tanpa `-re` selesai 9,3 detik pada `speed=1.04x`**; `-loop 1` dengan maupun tanpa `-re` sama-sama 9,3 detik. Kesimpulannya yang memacu rangkaian ini adalah audio harbor yang memang mengalir realtime, bukan `-re` — dan `-re` justru berbahaya di sini. Instalasi lama memakai `-re` dengan aman karena latarnya `-loop 1 -framerate N` (yang memancarkan frame pada fps sungguhan), bukan concat berdurasi panjang; jangan menyalin `-re`-nya begitu saja. Dijaga `tests/test-radio.js` lewat pemeriksaan "TIDAK ada -re pada input latar" dan ambang realtime.
+- **Slideshow ffconcat berganti TANPA jeda siaran** (2026-09-10, diuji): berbeda dari instalasi lama yang menjalankan ulang FFmpeg setiap pergantian gambar (jeda ~5 detik tiap rotasi). Daftar 3 gambar berdurasi 2 detik yang diminta 9 detik berganti tepat waktu pada 4 dari 4 sampel termasuk setelah daftarnya berputar. Syaratnya cuma satu: jangan pasang `-re` (lihat temuan di atas).
+- **Batang `showfreqs` jauh lebih pendek dari kotaknya** (2026-09-10, diukur): dengan `ascale=cbrt` dan derau pink a=0.5, batangnya hanya mengisi pita 20px paling bawah dari kotak setinggi 120px. Akibatnya menguji "apakah spektrum tergambar" dengan merata-ratakan seluruh kotak MENYESATKAN — selisihnya cuma 0,9 luma dan terbaca seperti gagal, padahal pada pita yang benar selisihnya 40 luma (115,4 saat berbunyi versus 75,3 saat senyap). Ukur luma puncak antar pita, jangan rata-rata kotak. Untuk UI: kotak spektrum yang tinggi akan tampak banyak kosong pada musik yang tidak keras — itu perilaku `showfreqs`, bukan bug.

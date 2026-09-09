@@ -7,8 +7,10 @@ const config = require('../config');
 const streamModel = require('../models/stream');
 const videoModel = require('../models/video');
 const playlistModel = require('../models/playlist');
+const backgroundModel = require('../models/streamBackground');
 const destinationModel = require('../models/destination');
 const ffmpeg = require('./ffmpeg');
+const liquidsoap = require('./liquidsoap');
 const rotationEngine = require('./rotationEngine');
 const { createLogger } = require('../utils/logger');
 const { shuffle } = require('../utils/helpers');
@@ -77,6 +79,142 @@ function resolveSource(stream, { write = true } = {}) {
   return { source: { ...video, filepath: absVideo }, label: video.title };
 }
 
+// -------------------------------------------------------------- mode radio
+
+/**
+ * Apakah siaran ini bermode radio: sumbernya playlist berisi musik, bukan video.
+ *
+ * Sengaja dibaca dari playlist, bukan dari kolom pembeda baru di `streams`.
+ * Menambah kolom ke models/stream.js berarti menyentuh SELECT yang dipakai
+ * hampir setiap halaman; satu pembacaan playlist saat start jauh lebih murah
+ * daripada risikonya.
+ */
+function isRadioStream(stream) {
+  if (!stream.playlist_id) return false;
+  const playlist = playlistModel.findById(stream.playlist_id);
+  return Boolean(playlist && playlist.kind === 'audio');
+}
+
+/** Port harbor yang sedang dipakai siaran lain, supaya tidak bertabrakan. */
+function takenHarborPorts() {
+  const taken = new Set();
+  for (const state of running.values()) {
+    if (state.harborPort) taken.add(state.harborPort);
+  }
+  return taken;
+}
+
+/**
+ * Validasi sumber siaran radio dan hitung semua path yang dibutuhkan — TANPA
+ * menulis apa pun ke disk.
+ *
+ * Dipisahkan dari penulisan berkas karena pratinjau perintah memanggilnya juga,
+ * dan pratinjau berasal dari request GET: sebuah GET tidak boleh meninggalkan
+ * berkas di disk, pelajaran yang sudah dibayar sekali di jalur playlist video.
+ *
+ * resolveSource() sengaja TIDAK disentuh. Impact analysis atasnya mengembalikan
+ * HIGH — 16 simbol dan tiga proses yang menyentuh setiap siaran (start
+ * terjadwal, pratinjau, auto-restart). Percabangannya dilakukan pemanggil.
+ */
+function resolveRadioSource(stream) {
+  const playlist = playlistModel.findById(stream.playlist_id);
+  if (!playlist) return { error: 'Playlist musik siaran ini sudah dihapus' };
+
+  const items = playlistModel.listItems(playlist.id);
+  if (!items.length) return { error: `Playlist "${playlist.name}" belum berisi lagu` };
+
+  const missingTrack = items.find((item) => !fs.existsSync(absoluteVideoPath(item.filepath)));
+  if (missingTrack) return { error: `File musik "${missingTrack.title}" tidak ditemukan di disk` };
+
+  const backgrounds = backgroundModel.listByStream(stream.id);
+  if (!backgrounds.length) return { error: 'Siaran radio ini belum punya gambar latar' };
+
+  const missingImage = backgrounds.find((bg) => !fs.existsSync(absoluteVideoPath(bg.filepath)));
+  if (missingImage) return { error: 'Sebagian gambar latar tidak ditemukan di disk' };
+
+  // Port yang sudah dipakai siaran ini sendiri dipertahankan saat restart
+  // otomatis; kalau tidak, setiap putaran restart membakar satu port baru.
+  const existing = running.get(stream.id);
+  const port = existing && existing.harborPort
+    ? existing.harborPort
+    : liquidsoap.allocatePort(takenHarborPorts());
+
+  return {
+    playlist,
+    items,
+    backgrounds,
+    port,
+    canvas: ffmpeg.radioCanvas(stream),
+    audioUrl: liquidsoap.harborUrl(port),
+    backgroundPath: ffmpeg.backgroundListPathFor(stream.id),
+    scriptPath: liquidsoap.scriptPathFor(stream.id),
+    label: `radio "${playlist.name}" (${items.length} lagu, ${backgrounds.length} latar)`,
+  };
+}
+
+/**
+ * Tulis semua berkas yang dibutuhkan siaran radio: daftar lagu liquidsoap,
+ * skrip .liq, gambar latar yang sudah di-pre-render, dan daftar ffconcat-nya.
+ *
+ * Async karena pre-render memanggil FFmpeg. Latar di-pre-render jadi BMP
+ * seukuran kanvas bukan demi kerapian: FFmpeg membongkar ulang berkas latar
+ * setiap frame selama siaran, dan inflate PNG 24 kali per detik adalah kerja
+ * sungguhan untuk piksel yang tidak pernah berubah.
+ */
+async function prepareRadioFiles(stream, resolved) {
+  liquidsoap.writePlaylist(
+    stream.id,
+    resolved.items.map((item) => ({ ...item, filepath: absoluteVideoPath(item.filepath) }))
+  );
+
+  liquidsoap.writeScript(stream.id, {
+    playlistPath: liquidsoap.playlistPathFor(stream.id),
+    port: resolved.port,
+    mode: resolved.playlist.shuffle ? 'randomize' : 'normal',
+  });
+
+  const rendered = [];
+  for (let i = 0; i < resolved.backgrounds.length; i += 1) {
+    const target = path.join(config.paths.tmp, `radiobg_${stream.id}_${i}.bmp`);
+    await ffmpeg.prerenderBackground(
+      absoluteVideoPath(resolved.backgrounds[i].filepath),
+      target,
+      resolved.canvas
+    );
+    rendered.push(target);
+  }
+
+  ffmpeg.buildBackgroundList(stream.id, rendered, stream.background_rotate_minutes);
+}
+
+/**
+ * Berkas sementara milik satu siaran, apa pun modenya: daftar concat untuk
+ * playlist video, dan daftar lagu + skrip + latar untuk radio. Memanggil
+ * keduanya selalu aman — yang tidak pernah dibuat cukup diabaikan.
+ */
+function cleanupStreamFiles(streamId) {
+  ffmpeg.cleanupConcatFile(streamId);
+  cleanupRadioFiles(streamId);
+}
+
+/** Hapus seluruh berkas sementara milik satu siaran radio. */
+function cleanupRadioFiles(streamId) {
+  liquidsoap.cleanupFiles(streamId);
+  ffmpeg.cleanupBackgroundList(streamId);
+
+  // Latar hasil pre-render dinomori per indeks; jumlahnya tidak diketahui di
+  // sini, jadi disapu berdasarkan pola nama.
+  try {
+    for (const name of fs.readdirSync(config.paths.tmp)) {
+      if (new RegExp(`^radiobg_${streamId}_\\d+\\.bmp$`).test(name)) {
+        try { fs.unlinkSync(path.join(config.paths.tmp, name)); } catch (_) { /* keburu hilang */ }
+      }
+    }
+  } catch (_) { /* folder tmp belum ada */ }
+}
+
+// ------------------------------------------------------------------- start
+
 async function start(streamId, { manual = true } = {}) {
   const existing = running.get(streamId);
   if (existing && !existing.stopping) {
@@ -86,7 +224,10 @@ async function start(streamId, { manual = true } = {}) {
   const stream = streamModel.findById(streamId);
   if (!stream) return { ok: false, error: 'Stream tidak ditemukan' };
 
-  const resolved = resolveSource(stream);
+  // resolveSource() TIDAK disentuh; percabangannya di sini. Impact analysis
+  // atasnya HIGH — 16 simbol dan tiga proses yang menyentuh setiap siaran.
+  const radio = isRadioStream(stream);
+  const resolved = radio ? resolveRadioSource(stream) : resolveSource(stream);
   if (resolved.error) {
     streamModel.setStatus(streamId, 'error', { error_message: resolved.error });
     return { ok: false, error: resolved.error };
@@ -98,7 +239,30 @@ async function start(streamId, { manual = true } = {}) {
   }
 
   const urls = destinations.map((d) => destinationModel.buildUrl(d));
-  const args = ffmpeg.buildArgs(stream, resolved.source, urls);
+
+  let args;
+  let liq = null;
+  if (radio) {
+    // Penulisan berkas dipisah dari validasi karena pre-render latar memanggil
+    // FFmpeg, dan itu async — sedangkan pratinjau perintah harus tetap sinkron
+    // dan tidak boleh menulis apa pun.
+    try {
+      await prepareRadioFiles(stream, resolved);
+    } catch (err) {
+      const message = `Persiapan siaran radio gagal: ${err.message}`;
+      streamModel.setStatus(streamId, 'error', { error_message: message });
+      streamModel.addLog(streamId, 'error', message);
+      return { ok: false, error: message };
+    }
+    args = ffmpeg.buildRadioArgs(
+      stream,
+      { audioUrl: resolved.audioUrl, backgroundPath: resolved.backgroundPath },
+      urls
+    );
+    liq = { scriptPath: resolved.scriptPath, port: resolved.port };
+  } else {
+    args = ffmpeg.buildArgs(stream, resolved.source, urls);
+  }
 
   streamModel.setStatus(streamId, 'starting', {
     started_at: new Date().toISOString(),
@@ -111,14 +275,38 @@ async function start(streamId, { manual = true } = {}) {
     `Memulai siaran ke ${destinations.map((d) => d.name).join(', ')} (mode ${stream.encode_mode})`
   );
 
-  return launch(streamId, args, destinations, { manual });
+  return launch(streamId, args, destinations, { manual, liq });
 }
 
-function launch(streamId, args, destinations, { manual }) {
+/**
+ * Jalankan siaran.
+ *
+ * Mode radio memakai DUA proses yang diperlakukan sebagai satu siaran:
+ * liquidsoap memegang daftar lagu dan menyiarkannya lewat harbor, FFmpeg
+ * membacanya dan menyusun gambar. Liquidsoap dijalankan lebih dulu, tapi FFmpeg
+ * tidak perlu menunggu harbor siap — `-reconnect` pada input audionya membuat
+ * ia mencoba lagi sendiri.
+ */
+function launch(streamId, args, destinations, { manual, liq = null }) {
+  let lsProc = null;
+  if (liq) {
+    try {
+      lsProc = liquidsoap.spawnEngine(liq.scriptPath);
+    } catch (err) {
+      const message = `Gagal menjalankan liquidsoap: ${err.message}`;
+      streamModel.setStatus(streamId, 'error', { error_message: message });
+      streamModel.addLog(streamId, 'error', message);
+      return { ok: false, error: message };
+    }
+  }
+
   let proc;
   try {
     proc = ffmpeg.spawnStream(args);
   } catch (err) {
+    // Jangan tinggalkan liquidsoap yatim kalau FFmpeg gagal dijalankan: ia akan
+    // terus memegang port harbor dan siaran berikutnya tidak bisa memakainya.
+    if (lsProc) killProcess(lsProc);
     streamModel.setStatus(streamId, 'error', { error_message: `Gagal menjalankan FFmpeg: ${err.message}` });
     streamModel.addLog(streamId, 'error', `Gagal menjalankan FFmpeg: ${err.message}`);
     return { ok: false, error: err.message };
@@ -128,6 +316,8 @@ function launch(streamId, args, destinations, { manual }) {
   const state = {
     proc,
     pid: proc.pid,
+    lsProc,
+    harborPort: liq ? liq.port : null,
     sessionId,
     args,
     destinations,
@@ -153,6 +343,28 @@ function launch(streamId, args, destinations, { manual }) {
 
   proc.on('close', (code, signal) => handleExit(streamId, state, code, signal));
 
+  if (lsProc) {
+    // Log liquidsoap dipisahkan dari log FFmpeg: baris rutinnya banyak memuat
+    // kata seperti "error" pada konteks yang tidak berarti gagal, dan penyaring
+    // di handleOutput akan mencatatnya ke database sebagai masalah.
+    lsProc.stderr.on('data', (chunk) => handleLiquidsoapOutput(streamId, state, chunk));
+    lsProc.stdout.on('data', (chunk) => handleLiquidsoapOutput(streamId, state, chunk));
+
+    lsProc.on('error', (err) => {
+      streamModel.addLog(streamId, 'error', `Proses liquidsoap error: ${err.message}`);
+      log.error(`Stream #${streamId} error liquidsoap`, err);
+    });
+
+    // Liquidsoap mati duluan: siaran radio tanpa audio tidak ada gunanya. FFmpeg
+    // ikut dimatikan supaya penanganannya jatuh ke handleExit yang sudah ada —
+    // termasuk backoff dan auto-restart — bukan ke jalur khusus baru.
+    lsProc.on('close', (code) => {
+      if (state.stopping) return;
+      streamModel.addLog(streamId, 'warn', `Liquidsoap keluar dengan kode ${code}; siaran dihentikan untuk dijalankan ulang`);
+      killProcess(state.proc);
+    });
+  }
+
   // Rotasi disiapkan setelah proses hidup, bukan sebelumnya.
   rotationEngine.onStreamStart(streamId).catch((err) =>
     log.error(`Setup rotasi stream #${streamId} gagal`, err)
@@ -162,6 +374,10 @@ function launch(streamId, args, destinations, { manual }) {
 }
 
 // ------------------------------------------------------------------- output
+
+// FFmpeg dan liquidsoap sama-sama memisahkan baris dengan CRLF, LF, atau CR
+// telanjang, tergantung platform dan apakah barisnya baris progres.
+const SPLIT_LINES = /\r?\n|\r/;
 
 const STATS_RE = /frame=\s*(\d+).*?fps=\s*([\d.]+).*?bitrate=\s*(\S+).*?speed=\s*(\S+)/;
 const TIME_RE = /time=(\d{2}:\d{2}:\d{2}\.\d{2})/;
@@ -195,6 +411,23 @@ function handleOutput(streamId, state, chunk) {
   }
 }
 
+/**
+ * Baris log liquidsoap. Sengaja tidak lewat handleOutput: di sana setiap baris
+ * yang memuat kata "error"/"failed" dicatat ke database sebagai masalah, dan
+ * liquidsoap rutin mencetak baris semacam itu saat berjalan normal. Hanya
+ * kegagalan yang jelas yang diteruskan ke database.
+ */
+function handleLiquidsoapOutput(streamId, state, chunk) {
+  for (const rawLine of chunk.toString().split(SPLIT_LINES)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    pushLog(state, `[liquidsoap] ${line}`);
+    if (/(fatal|cannot|could not|no such file|permission denied|address already in use)/i.test(line)) {
+      streamModel.addLog(streamId, 'error', `liquidsoap: ${line}`);
+    }
+  }
+}
+
 function pushLog(state, line) {
   state.logs.push({ at: Date.now(), line });
   if (state.logs.length > LOG_BUFFER_LINES) state.logs.shift();
@@ -203,6 +436,12 @@ function pushLog(state, line) {
 // -------------------------------------------------------------------- exit
 
 function handleExit(streamId, state, code, signal) {
+  // Liquidsoap selalu ikut dimatikan, di semua cabang di bawah ini. Setiap
+  // cabang berakhir dengan siaran berhenti atau dijalankan ulang dari awal, dan
+  // start() membuat proses liquidsoap yang baru — yang lama hanya akan
+  // menahan port harbor-nya.
+  if (state.lsProc) killProcess(state.lsProc);
+
   const uptime = Date.now() - state.startedAt;
   streamModel.closeSession(state.sessionId, { exitCode: code, reason: state.stopReason || (signal ? `signal ${signal}` : null) });
 
@@ -210,7 +449,7 @@ function handleExit(streamId, state, code, signal) {
     running.delete(streamId);
     // Daftar concat hanya berguna selama siaran berjalan. Dihapus di sini,
     // bukan saat restart otomatis, sebab proses baru masih membacanya.
-    ffmpeg.cleanupConcatFile(streamId);
+    cleanupStreamFiles(streamId);
     streamModel.setStatus(streamId, 'idle', { pid: null, ended_at: new Date().toISOString() });
     streamModel.addLog(streamId, 'info', `Siaran dihentikan (${state.stopReason || 'manual'})`);
     streamModel.trimLogs(streamId);
@@ -227,7 +466,7 @@ function handleExit(streamId, state, code, signal) {
     running.delete(streamId);
     // Berhenti untuk selamanya: tidak ada proses baru yang akan membaca
     // daftarnya, jadi dibersihkan seperti pada penghentian manual.
-    ffmpeg.cleanupConcatFile(streamId);
+    cleanupStreamFiles(streamId);
     streamModel.setStatus(streamId, 'error', {
       pid: null,
       ended_at: new Date().toISOString(),
@@ -246,7 +485,7 @@ function handleExit(streamId, state, code, signal) {
     running.delete(streamId);
     // Jatah restart habis — sama seperti cabang di atas, tidak ada lagi yang
     // akan memakai daftarnya.
-    ffmpeg.cleanupConcatFile(streamId);
+    cleanupStreamFiles(streamId);
     streamModel.setStatus(streamId, 'error', {
       pid: null,
       ended_at: new Date().toISOString(),
@@ -294,7 +533,7 @@ function stop(streamId, reason = 'manual') {
     if (stream && stream.isActive) {
       // Prosesnya sudah tidak ada (mis. aplikasi sempat direstart), jadi daftar
       // concat yang mungkin tertinggal ikut dibereskan di sini.
-      ffmpeg.cleanupConcatFile(streamId);
+      cleanupStreamFiles(streamId);
       streamModel.setStatus(streamId, 'idle', { pid: null, ended_at: new Date().toISOString() });
       rotationEngine.onStreamStop(streamId);
       return { ok: true, note: 'Status dibersihkan (proses sudah tidak ada)' };
@@ -379,12 +618,30 @@ function commandPreview(streamId) {
   const destinations = destinationModel.listForStream(streamId).filter((d) => d.active);
   if (!destinations.length) return null;
 
-  // Pratinjau hanya menyusun teks perintah — tidak boleh menulis daftar concat.
+  const urls = destinations.map((d) => destinationModel.buildUrl(d));
+  const redact = destinations.map((d) => d.stream_key);
+
+  // Pratinjau hanya menyusun teks perintah; tidak boleh menulis apa pun ke
+  // disk, karena ia dipanggil dari request GET halaman detail siaran.
+  if (isRadioStream(stream)) {
+    const resolved = resolveRadioSource(stream);
+    if (resolved.error) return null;
+    const args = ffmpeg.buildRadioArgs(
+      stream,
+      { audioUrl: resolved.audioUrl, backgroundPath: resolved.backgroundPath },
+      urls
+    );
+    // Dua proses, jadi dua baris: yang menyusun audio dan yang menyusun gambar.
+    return `${liquidsoap.previewCommand(resolved.scriptPath)}
+
+${ffmpeg.previewCommand(args, { redact })}`;
+  }
+
   const resolved = resolveSource(stream, { write: false });
   if (resolved.error) return null;
 
-  const args = ffmpeg.buildArgs(stream, resolved.source, destinations.map((d) => destinationModel.buildUrl(d)));
-  return ffmpeg.previewCommand(args, { redact: destinations.map((d) => d.stream_key) });
+  const args = ffmpeg.buildArgs(stream, resolved.source, urls);
+  return ffmpeg.previewCommand(args, { redact });
 }
 
 /**
@@ -393,7 +650,8 @@ function commandPreview(streamId) {
  * masih memegang berkasnya.
  */
 function sweepConcatFiles() {
-  return ffmpeg.sweepConcatFiles((streamId) => !running.has(streamId));
+  const isOrphan = (streamId) => !running.has(streamId);
+  return ffmpeg.sweepConcatFiles(isOrphan) + liquidsoap.sweepFiles(isOrphan);
 }
 
 function activeCount() {
@@ -441,8 +699,8 @@ function recoverOnBoot() {
   // yang masih ada pasti sisa dari proses sebelumnya. Dilakukan di luar cabang
   // `stale` di bawah: aplikasi bisa saja mati setelah status siaran tercatat
   // error, dan berkasnya tetap tertinggal.
-  const sweptOnBoot = ffmpeg.sweepConcatFiles(() => true);
-  if (sweptOnBoot) log.info(`${sweptOnBoot} daftar playlist sisa siaran sebelumnya dihapus`);
+  const sweptOnBoot = ffmpeg.sweepConcatFiles(() => true) + liquidsoap.sweepFiles(() => true);
+  if (sweptOnBoot) log.info(`${sweptOnBoot} berkas sisa siaran sebelumnya dihapus`);
 
   const stale = streamModel.listActive();
   if (!stale.length) return 0;
@@ -469,4 +727,9 @@ function shutdown() {
 module.exports = {
   start, stop, restart, isRunning, runtime, recentLogs, commandPreview,
   activeCount, egress, parseBitrate, recoverOnBoot, shutdown, sweepConcatFiles,
+  // Bagian dalam mode radio, diekspor khusus untuk diuji. Menjalankan
+  // liquidsoap sungguhan mustahil di Windows, jadi yang diuji adalah seluruh
+  // keputusan di sekitarnya — dan justru di situlah kesalahan bisa lolos tanpa
+  // ketahuan sampai siaran benar-benar dijalankan.
+  __test: { isRadioStream, resolveRadioSource, prepareRadioFiles, cleanupRadioFiles },
 };

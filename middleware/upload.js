@@ -86,6 +86,7 @@ function verifyContent(family, label) {
 
 const verifyVideoContent = verifyContent('video', 'video');
 const verifyImageContent = verifyContent('image', 'gambar');
+const verifyAudioContent = verifyContent('audio', 'audio');
 
 /** Ubah path absolut hasil multer jadi path relatif untuk disimpan di DB. */
 function relativePath(absolute) {
@@ -108,6 +109,6 @@ function handleUploadError(err, req, res, next) {
 
 module.exports = {
   uploadVideo, uploadThumbnail, uploadThumbnails,
-  verifyVideoContent, verifyImageContent, contentError,
+  verifyVideoContent, verifyImageContent, verifyAudioContent, contentError,
   relativePath, handleUploadError, VIDEO_EXT, IMAGE_EXT,
 };

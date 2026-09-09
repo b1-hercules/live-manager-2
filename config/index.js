@@ -57,6 +57,10 @@ const config = {
 
   ffmpegPath: process.env.FFMPEG_PATH || '',
   ffprobePath: process.env.FFPROBE_PATH || '',
+  // Dipakai mode radio saja. Kosong berarti "andalkan PATH"; di Windows
+  // liquidsoap memang tidak ada, dan itu hanya berarti mode radio tak tersedia
+  // di mesin itu — bukan kesalahan yang perlu menghentikan aplikasi.
+  liquidsoapPath: process.env.LIQUIDSOAP_PATH || '',
 
   maxUploadBytes: envInt('MAX_UPLOAD_MB', 4096) * 1024 * 1024,
   maxThumbBytes: envInt('MAX_THUMB_MB', 2) * 1024 * 1024,

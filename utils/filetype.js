@@ -28,6 +28,10 @@ function ascii(buf, offset, text) {
 const MP4_ATOMS = ['ftyp', 'moov', 'mdat', 'free', 'skip', 'wide', 'pnot'];
 
 const SIGNATURES = [
+  // WAJIB sebelum MP4/MOV. M4A/M4B dan MP4 sama-sama diawali atom `ftyp`;
+  // yang membedakan cuma brand di offset 8 ("M4A " vs "isom"). Kalau urutannya
+  // dibalik, setiap berkas musik AAC lolos sebagai video.
+  { format: 'M4A', family: 'audio', test: (b) => ascii(b, 4, 'ftyp') && (ascii(b, 8, 'M4A ') || ascii(b, 8, 'M4B ')) },
   { format: 'MP4/MOV', family: 'video', test: (b) => MP4_ATOMS.some((atom) => ascii(b, 4, atom)) },
   { format: 'Matroska/WebM', family: 'video', test: (b) => matches(b, 0, [0x1a, 0x45, 0xdf, 0xa3]) },
   { format: 'AVI', family: 'video', test: (b) => ascii(b, 0, 'RIFF') && ascii(b, 8, 'AVI ') },
@@ -47,6 +51,16 @@ const SIGNATURES = [
   { format: 'JPEG', family: 'image', test: (b) => matches(b, 0, [0xff, 0xd8, 0xff]) },
   { format: 'PNG', family: 'image', test: (b) => matches(b, 0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) },
   { format: 'WebP', family: 'image', test: (b) => ascii(b, 0, 'RIFF') && ascii(b, 8, 'WEBP') },
+  // RIFF dipakai bertiga (AVI, WebP, WAV); yang menentukan adalah tag di
+  // offset 8, jadi ketiganya saling lepas dan urutannya tidak penting.
+  { format: 'WAV', family: 'audio', test: (b) => ascii(b, 0, 'RIFF') && ascii(b, 8, 'WAVE') },
+  { format: 'FLAC', family: 'audio', test: (b) => ascii(b, 0, 'fLaC') },
+  { format: 'OGG', family: 'audio', test: (b) => ascii(b, 0, 'OggS') },
+  // MP3 ber-tag ID3 diawali "ID3". Tanpa tag, frame pertama diawali sync 11 bit:
+  // 0xFF lalu tiga bit teratas menyala. Syarat bit itu sengaja ketat supaya
+  // tidak menyambar JPEG, yang juga diawali 0xFF — pada JPEG byte kedua 0xD8,
+  // dan 0xD8 & 0xE0 = 0xC0, jadi tidak lolos.
+  { format: 'MP3', family: 'audio', test: (b) => ascii(b, 0, 'ID3') || (b[0] === 0xff && (b[1] & 0xe0) === 0xe0) },
 ];
 
 /** Baca sebagian awal file; file yang lebih pendek dari HEADER_BYTES tetap dilayani. */
@@ -63,7 +77,7 @@ function readHeader(filePath) {
 
 /**
  * Kembalikan { format, family } bila signature dikenali, atau null bila tidak.
- * family bernilai 'video' atau 'image'.
+ * family bernilai 'video', 'audio', atau 'image'.
  */
 function inspect(filePath) {
   const header = readHeader(filePath);
