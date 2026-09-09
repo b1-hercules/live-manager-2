@@ -39,6 +39,10 @@ gampang di-deploy.
     (landscape / portrait untuk Shorts & TikTok).
 - **Loop tanpa batas** untuk siaran 24/7, dengan `-fflags +genpts` agar timestamp tidak kacau
   setiap file diulang.
+- **Playlist multi-video** — satu siaran bisa memutar beberapa video berurutan lewat concat demuxer
+  FFmpeg, bukan hanya mengulang satu file. Urutannya bisa diacak, dan `-stream_loop` mengulang
+  seluruh daftar dari awal. Video yang spesifikasinya tidak seragam **ditolak sebelum siaran
+  dimulai**, bukan dibiarkan gagal di tengah — lihat [Susun playlist](#1-unggah-video).
 - **Auto-restart** dengan backoff bertingkat (5 detik → 2 menit, maksimal 10 percobaan). Hitungan
   di-reset setiap kali siaran sempat berjalan stabil lebih dari 1 menit.
 - **Penjadwalan** — mulai pada waktu tertentu, berhenti pada waktu tertentu, atau batasi durasi.
@@ -68,10 +72,18 @@ gampang di-deploy.
 ### Lain-lain
 
 - Galeri video dengan probe metadata otomatis (durasi, resolusi, codec) dan thumbnail hasil ekstrak
-  frame.
+  frame, plus **pratinjau langsung di browser** tanpa perlu mengunduh dulu.
+- **Unggahan berpotongan yang bisa dilanjutkan** — koneksi putus di tengah tidak berarti mengulang
+  dari nol. Server yang memegang offset, dan kemajuannya bertahan meski aplikasi direstart.
+- **Impor video dari Google Drive** — memakai ulang koneksi OAuth YouTube yang sudah ada, berjalan
+  di latar dengan laporan kemajuan.
+- **Validasi isi berkas dari magic byte** — ekstensi tidak dipercaya; berkas yang isinya bukan media
+  ditolak meski dinamai `.mp4`.
 - Peringatan kompatibilitas sebelum siaran (misalnya sumber bukan H.264 padahal mode Copy dipilih).
 - Pratinjau perintah FFmpeg dengan stream key tersamarkan, untuk debug manual.
-- Dashboard dengan checklist persiapan, statistik sistem, dan meter kuota API.
+- Dashboard dengan checklist persiapan, meter kuota API, **sisa ruang disk sungguhan** (bukan hanya
+  total berkas aplikasi, lengkap dengan peringatan saat pemakaian di atas 90%), dan **bandwidth
+  keluar** dari agregasi bitrate siaran yang sedang berjalan.
 
 ---
 
@@ -235,7 +247,24 @@ memakai kredensial bersama untuk ini.
 ### 1. Unggah video
 
 **Galeri Video** → pilih file. Aplikasi otomatis membaca durasi, resolusi, dan codec lewat ffprobe,
-lalu mengambil satu frame sebagai thumbnail.
+lalu mengambil satu frame sebagai thumbnail. Isi berkas diperiksa dari *magic byte*, jadi berkas
+yang bukan media ditolak walaupun ekstensinya benar.
+
+Ada tiga jalan masuk, dan ketiganya melewati pemeriksaan yang sama:
+
+- **Unggah biasa** — untuk berkas kecil. Batasnya `MAX_UPLOAD_MB` (bawaan 4 GB).
+- **Unggah berpotongan** — dipakai otomatis oleh browser yang mendukung `File.slice`. Berkas dikirim
+  per 8 MB; kalau koneksi putus, unggahan disambung dari offset terakhir yang diakui server —
+  termasuk setelah halaman dimuat ulang. Unggahan yang ditinggalkan disapu otomatis tiap hari.
+- **Impor dari Google Drive** — tombol **Impor dari Drive** membuka daftar video di Drive (termasuk
+  Shared Drive) beserta pencariannya. Unduhan berjalan di latar, jadi halaman boleh ditutup.
+  Prasyaratnya izin `drive.readonly`: **akun YouTube yang dihubungkan sebelum fitur ini ada harus
+  dihubungkan ulang** agar izinnya ikut diberikan. Akun lama tetap berfungsi penuh untuk rotasi —
+  hanya impor Drive-nya yang tidak aktif.
+
+Thumbnail di galeri bisa diklik untuk **pratinjau** langsung di halaman. Format yang tidak didukung
+browser (mkv, avi, flv, ts, mpg) menampilkan penjelasan dan tautan unduh — berkasnya tetap sah dan
+tetap bisa disiarkan FFmpeg.
 
 Untuk mode Copy, video sumber harus **H.264**. Kalau bukan, aplikasi akan memperingatkan di halaman
 detail stream. Konversi lebih dulu:
@@ -243,6 +272,25 @@ detail stream. Konversi lebih dulu:
 ```bash
 ffmpeg -i sumber.mkv -c:v libx264 -preset slow -crf 20 -c:a aac -b:a 128k hasil.mp4
 ```
+
+**Susun playlist (opsional).** Kalau satu video terasa terlalu berulang untuk siaran 24 jam, buka
+**Playlist** → **Playlist Baru**, tambahkan video, lalu atur urutannya dengan menyeret barisnya.
+Aktifkan **acak** kalau ingin urutannya diundi setiap siaran dimulai.
+
+Concat demuxer FFmpeg menyambung berkas **tanpa menormalkannya**, jadi keseragaman isi playlist itu
+penting:
+
+| Kondisi | Mode Copy | Mode Re-encode |
+|---|---|---|
+| Resolusi berbeda | ditolak — siaran akan rusak | dinormalkan, perpindahan bisa tersendat |
+| Codec video berbeda | ditolak | dinormalkan |
+| Sebagian video tanpa audio | **ditolak** | **ditolak** |
+| FPS berbeda | diperingatkan | dinormalkan |
+
+Sebagian video tanpa audio ditolak di kedua mode: re-encode bisa menyeragamkan gambar, tapi tidak
+bisa memunculkan track audio yang memang tidak ada, dan susunan stream yang berubah di tengah siaran
+membuat platform memutus koneksi. Halaman playlist menampilkan peringatan untuk kedua mode sebelum
+kamu memilihnya di form stream.
 
 ### 2. Tambah tujuan RTMP
 
@@ -272,7 +320,8 @@ Musik {{hari}} Malam · Sudah {{uptime}} mengudara
 
 **Stream → Stream Baru**:
 
-- **Sumber & Tujuan** — pilih video dan centang tujuan RTMP (boleh lebih dari satu).
+- **Sumber & Tujuan** — pilih **Satu Video** atau **Playlist** lewat tab sumber, lalu centang tujuan
+  RTMP (boleh lebih dari satu).
 - **Encoding** — Copy untuk hemat CPU, Re-encode kalau perlu mengubah resolusi/bitrate.
 - **Rotasi Metadata** — pilih profil rotasi, pilih channel YouTube, aktifkan rotasi.
 - **Jadwal** — opsional.
@@ -354,20 +403,26 @@ config/index.js           konfigurasi terpusat dari .env
 db/
   index.js                koneksi better-sqlite3 (WAL)
   migrate.js              migrasi berbasis PRAGMA user_version
-models/                   akses data (user, video, destination, account, stream, rotation)
+models/                   akses data (user, video, playlist, destination, account, stream, rotation)
 services/
-  ffmpeg.js               probe, thumbnail, builder argumen FFmpeg
-  streamManager.js        siklus hidup proses FFmpeg, auto-restart, statistik
+  ffmpeg.js               probe, thumbnail, builder argumen FFmpeg, daftar concat playlist
+  streamManager.js        siklus hidup proses FFmpeg, auto-restart, statistik, bandwidth keluar
   rotationEngine.js       penjadwal & pelaksana rotasi metadata
   youtube.js              OAuth + YouTube Data API v3
-  scheduler.js            jadwal mulai/berhenti siaran
+  drive.js                daftar, cari, dan unduh video dari Google Drive
+  videoImport.js          job impor Drive di latar (downloading → processing → done)
+  videoIngest.js          pipeline pasca-berkas: magic byte → ffprobe → thumbnail → simpan
+  chunkUpload.js          protokol unggahan berpotongan yang bisa dilanjutkan
+  scheduler.js            jadwal mulai/berhenti siaran + pembersihan harian
   template.js             placeholder dinamis
-  system.js               statistik CPU/RAM/storage
+  system.js               statistik CPU/RAM + ruang disk asli (statfs)
+utils/                    helper, kripto, logger, sniffing tipe berkas (filetype.js)
 middleware/               auth, csrf, session store, upload, error handler
 routes/                   handler HTTP
 views/                    template EJS
 public/                   CSS & JS klien (tanpa CDN, jalan offline)
-storage/                  video & thumbnail yang diunggah
+storage/                  video, thumbnail, serta unggahan/impor yang belum selesai (tmp/)
+tests/                    skrip tes Node polos — lihat tests/README.md
 ```
 
 ### Perintah
@@ -376,6 +431,7 @@ storage/                  video & thumbnail yang diunggah
 |---|---|
 | `npm start` | jalankan aplikasi |
 | `npm run dev` | jalankan dengan nodemon |
+| `npm test` | jalankan seluruh tes (butuh ffmpeg; menyentuh DB kerja dengan backup & restore) |
 | `npm run migrate` | jalankan migrasi database saja |
 | `npm run generate-secret` | buat SESSION_SECRET & ENCRYPTION_KEY |
 | `npm run reset-password` | daftar user / reset password lewat terminal |
@@ -401,6 +457,25 @@ tercatat di log stream dan di halaman Riwayat Rotasi.
 YouTube baru menandai broadcast sebagai `active` beberapa saat setelah data mulai masuk. Tunggu
 1–2 menit. Kalau tetap tidak terdeteksi, matikan *Deteksi broadcast otomatis* dan isi video ID
 manual.
+
+**"Playlist tidak bisa disiarkan" saat menekan Mulai Siaran**
+Isi playlist tidak seragam. Pesannya menyebut sebabnya: resolusi berbeda, codec video berbeda, atau
+sebagian video tidak punya audio. Dua yang pertama selesai dengan pindah ke mode Re-encode; yang
+ketiga harus dibereskan di berkasnya (tambahkan track audio senyap, atau keluarkan video itu dari
+playlist).
+
+**Tombol Impor dari Drive bilang akunnya belum diberi izin**
+Akun itu dihubungkan sebelum izin `drive.readonly` ditambahkan. Buka **Akun YouTube** lalu hubungkan
+ulang channel tersebut. Rotasi metadata tetap berjalan normal selama akun belum dihubungkan ulang.
+
+**Unggahan besar terputus di tengah**
+Pilih berkas yang sama sekali lagi di form unggah — unggahan disambung dari potongan terakhir yang
+sudah diterima server, bukan diulang dari nol. Unggahan yang ditinggalkan lebih dari sehari dihapus
+oleh pembersihan harian.
+
+**Pratinjau video hanya menampilkan pesan, bukan gambar**
+Browser tidak punya codec untuk mkv/avi/flv/ts/mpg. Ini batasan browser, bukan berkasnya: FFmpeg
+tetap bisa menyiarkannya. Pakai tautan unduh di dalam modal kalau ingin memeriksanya sendiri.
 
 **Thumbnail ditolak**
 Channel belum terverifikasi di YouTube, atau file melebihi 2 MB. Verifikasi channel di
@@ -433,7 +508,10 @@ cd node_modules/better-sqlite3 && npx prebuild-install --runtime=node
   memakai `ENCRYPTION_KEY`. Kalau kunci ini diganti, semua akun YouTube harus dihubungkan ulang.
 - Proteksi CSRF pada seluruh request yang mengubah data. Rute unggahan berkas memakai verifikasi
   tertunda (setelah multer mengurai body) — lihat komentar di `middleware/csrf.js`.
-- Video dan thumbnail hanya bisa diakses setelah login.
+- Berkas unggahan diverifikasi dari *magic byte*, bukan dari ekstensi atau `Content-Type` kiriman
+  klien. Berlaku sama untuk unggahan biasa, unggahan berpotongan, dan impor Drive.
+- Video dan thumbnail hanya bisa diakses setelah login; unggahan dan impor milik satu pengguna tidak
+  bisa dilihat, disambung, atau dibatalkan pengguna lain.
 - Rate limit pada endpoint login.
 - **Jangan pernah** mengekspos aplikasi ini ke internet tanpa HTTPS. Siapa pun yang punya stream key
   kamu bisa menyiarkan apa pun ke channelmu.

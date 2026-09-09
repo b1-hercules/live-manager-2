@@ -128,6 +128,13 @@ function cleanup() {
   } catch (err) {
     log.error('Pembersihan unggahan tertinggal gagal', err);
   }
+
+  try {
+    const lists = streamManager.sweepConcatFiles();
+    if (lists) log.info(`${lists} daftar playlist tertinggal dihapus`);
+  } catch (err) {
+    log.error('Pembersihan daftar playlist gagal', err);
+  }
 }
 
 module.exports = { start, stop, tick, cleanup };

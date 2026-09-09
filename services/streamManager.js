@@ -36,8 +36,12 @@ function absoluteVideoPath(filepath) {
  * Tentukan sumber siaran: satu video, atau playlist berisi beberapa video.
  * Mengembalikan { source } untuk buildArgs, atau { error } berisi alasan yang
  * bisa langsung ditampilkan ke pengguna.
+ *
+ * `write: false` menyusun sumber tanpa menulis daftar concat ke disk — dipakai
+ * pratinjau perintah, yang tidak menjalankan apa pun dan karena itu tidak boleh
+ * meninggalkan jejak.
  */
-function resolveSource(stream) {
+function resolveSource(stream, { write = true } = {}) {
   if (stream.playlist_id) {
     const playlist = playlistModel.findById(stream.playlist_id);
     if (!playlist) return { error: 'Playlist sumber siaran ini sudah dihapus' };
@@ -57,7 +61,8 @@ function resolveSource(stream) {
     return {
       source: ffmpeg.buildConcatSource(
         stream.id,
-        ordered.map((item) => ({ ...item, filepath: absoluteVideoPath(item.filepath) }))
+        ordered.map((item) => ({ ...item, filepath: absoluteVideoPath(item.filepath) })),
+        { write }
       ),
       label: `playlist "${playlist.name}" (${items.length} video)`,
     };
@@ -220,6 +225,9 @@ function handleExit(streamId, state, code, signal) {
 
   if (!stream?.auto_restart) {
     running.delete(streamId);
+    // Berhenti untuk selamanya: tidak ada proses baru yang akan membaca
+    // daftarnya, jadi dibersihkan seperti pada penghentian manual.
+    ffmpeg.cleanupConcatFile(streamId);
     streamModel.setStatus(streamId, 'error', {
       pid: null,
       ended_at: new Date().toISOString(),
@@ -236,6 +244,9 @@ function handleExit(streamId, state, code, signal) {
 
   if (state.restarts > MAX_RESTARTS) {
     running.delete(streamId);
+    // Jatah restart habis — sama seperti cabang di atas, tidak ada lagi yang
+    // akan memakai daftarnya.
+    ffmpeg.cleanupConcatFile(streamId);
     streamModel.setStatus(streamId, 'error', {
       pid: null,
       ended_at: new Date().toISOString(),
@@ -281,6 +292,9 @@ function stop(streamId, reason = 'manual') {
     // Tidak ada proses di memori: rapikan status yang tertinggal di DB.
     const stream = streamModel.findById(streamId);
     if (stream && stream.isActive) {
+      // Prosesnya sudah tidak ada (mis. aplikasi sempat direstart), jadi daftar
+      // concat yang mungkin tertinggal ikut dibereskan di sini.
+      ffmpeg.cleanupConcatFile(streamId);
       streamModel.setStatus(streamId, 'idle', { pid: null, ended_at: new Date().toISOString() });
       rotationEngine.onStreamStop(streamId);
       return { ok: true, note: 'Status dibersihkan (proses sudah tidak ada)' };
@@ -365,11 +379,21 @@ function commandPreview(streamId) {
   const destinations = destinationModel.listForStream(streamId).filter((d) => d.active);
   if (!destinations.length) return null;
 
-  const resolved = resolveSource(stream);
+  // Pratinjau hanya menyusun teks perintah — tidak boleh menulis daftar concat.
+  const resolved = resolveSource(stream, { write: false });
   if (resolved.error) return null;
 
   const args = ffmpeg.buildArgs(stream, resolved.source, destinations.map((d) => destinationModel.buildUrl(d)));
   return ffmpeg.previewCommand(args, { redact: destinations.map((d) => d.stream_key) });
+}
+
+/**
+ * Buang daftar concat yang tidak dimiliki siaran berjalan mana pun. Dipanggil
+ * pembersihan harian scheduler; yang berjalan sekarang dilewati karena FFmpeg
+ * masih memegang berkasnya.
+ */
+function sweepConcatFiles() {
+  return ffmpeg.sweepConcatFiles((streamId) => !running.has(streamId));
 }
 
 function activeCount() {
@@ -413,6 +437,13 @@ function egress() {
  * Baris yang masih berstatus live harus dikembalikan ke keadaan wajar.
  */
 function recoverOnBoot() {
+  // Saat boot belum ada satu pun siaran berjalan, jadi setiap daftar concat
+  // yang masih ada pasti sisa dari proses sebelumnya. Dilakukan di luar cabang
+  // `stale` di bawah: aplikasi bisa saja mati setelah status siaran tercatat
+  // error, dan berkasnya tetap tertinggal.
+  const sweptOnBoot = ffmpeg.sweepConcatFiles(() => true);
+  if (sweptOnBoot) log.info(`${sweptOnBoot} daftar playlist sisa siaran sebelumnya dihapus`);
+
   const stale = streamModel.listActive();
   if (!stale.length) return 0;
 
@@ -437,5 +468,5 @@ function shutdown() {
 
 module.exports = {
   start, stop, restart, isRunning, runtime, recentLogs, commandPreview,
-  activeCount, egress, parseBitrate, recoverOnBoot, shutdown,
+  activeCount, egress, parseBitrate, recoverOnBoot, shutdown, sweepConcatFiles,
 };

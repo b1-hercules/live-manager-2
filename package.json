@@ -5,6 +5,7 @@
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
+    "test": "node tests/run.js",
     "dev": "nodemon app.js",
     "migrate": "node db/migrate.js",
     "reset-password": "node scripts/reset-password.js",

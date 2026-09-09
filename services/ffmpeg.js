@@ -278,6 +278,14 @@ function escapeConcatPath(absPath) {
 }
 
 /**
+ * Satu berkas daftar per stream, bukan per playlist: dua stream boleh memakai
+ * playlist yang sama tanpa saling menimpa daftarnya.
+ */
+function concatPathFor(streamId) {
+  return path.join(config.paths.tmp, `playlist_${streamId}.txt`);
+}
+
+/**
  * Tulis daftar concat untuk sebuah playlist dan kembalikan sumber yang bisa
  * dipakai buildArgs. Berkas daftarnya berumur sependek siaran itu sendiri;
  * streamManager yang menghapusnya lewat cleanupConcatFile().
@@ -285,14 +293,21 @@ function escapeConcatPath(absPath) {
  * Codec diambil dari item pertama — aman karena playlist yang tidak seragam
  * ditolak oleh playlistWarnings() sebelum siaran dimulai.
  */
-function buildConcatSource(streamId, items) {
+function buildConcatSource(streamId, items, { write = true } = {}) {
   if (!items.length) throw new Error('Playlist kosong');
 
-  const lines = items
-    .map((item) => `file '${escapeConcatPath(path.resolve(config.root, item.filepath))}'`)
-    .join('\n');
-  const concatPath = path.join(config.paths.tmp, `playlist_${streamId}.txt`);
-  fs.writeFileSync(concatPath, `${lines}\n`, 'utf8');
+  const concatPath = concatPathFor(streamId);
+
+  // `write: false` dipakai pratinjau perintah. Menyusun argumen tidak boleh
+  // meninggalkan berkas di disk: pratinjau dipanggil dari request GET halaman
+  // detail stream, dan efek samping tulis-ke-disk dari sebuah GET berarti
+  // berkas menumpuk hanya karena halaman dibuka.
+  if (write) {
+    const lines = items
+      .map((item) => `file '${escapeConcatPath(path.resolve(config.root, item.filepath))}'`)
+      .join('\n');
+    fs.writeFileSync(concatPath, `${lines}\n`, 'utf8');
+  }
 
   const first = items[0];
   return {
@@ -305,8 +320,38 @@ function buildConcatSource(streamId, items) {
 
 function cleanupConcatFile(streamId) {
   try {
-    fs.unlinkSync(path.join(config.paths.tmp, `playlist_${streamId}.txt`));
-  } catch (_) { /* tidak pernah dibuat atau sudah dihapus */ }
+    fs.unlinkSync(concatPathFor(streamId));
+  } catch (_) { /* tidak pernah dibuat, sudah dihapus, atau masih dipegang FFmpeg */ }
+}
+
+/**
+ * Buang daftar concat yang tidak lagi dimiliki siaran mana pun. Yang menentukan
+ * "tidak dimiliki" adalah pemanggil (`isOrphan`), sebab streamManager yang tahu
+ * isi peta `running` — di sini sengaja tidak ada asumsi soal itu.
+ *
+ * Milik siaran berjalan tidak boleh disentuh: FFmpeg memegang berkas daftarnya
+ * tetap terbuka selama siaran (diuji — di Windows OS bahkan menolak
+ * menghapusnya dengan EBUSY), jadi menghapusnya paling baik sia-sia dan paling
+ * buruk merusak putaran playlist berikutnya.
+ */
+function sweepConcatFiles(isOrphan) {
+  let files = [];
+  try {
+    files = fs.readdirSync(config.paths.tmp);
+  } catch (_) {
+    return 0;
+  }
+
+  let removed = 0;
+  for (const name of files) {
+    const match = /^playlist_(\d+)\.txt$/.exec(name);
+    if (!match || !isOrphan(Number(match[1]))) continue;
+    try {
+      fs.unlinkSync(path.join(config.paths.tmp, name));
+      removed += 1;
+    } catch (_) { /* keburu hilang, atau masih dipegang proses lain */ }
+  }
+  return removed;
 }
 
 /**
@@ -444,6 +489,7 @@ module.exports = {
   ffmpegPath, ffprobePath, checkAvailability,
   probe, generateThumbnail,
   buildArgs, buildVideoFilter, compatibilityWarnings,
-  buildConcatSource, cleanupConcatFile, playlistWarnings, playlistBlockers,
+  buildConcatSource, cleanupConcatFile, sweepConcatFiles, concatPathFor,
+  playlistWarnings, playlistBlockers,
   spawnStream, previewCommand, escapeTee,
 };

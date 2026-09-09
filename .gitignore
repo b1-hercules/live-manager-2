@@ -12,3 +12,10 @@ storage/tmp/*
 !storage/**/.gitkeep
 .DS_Store
 Thumbs.db
+
+# Konfigurasi kode-intelijen & agen (lokal, tidak ikut repo)
+.claude/
+.gitnexus/
+CLAUDE.md
+AGENTS.md
+tests/.run.lock

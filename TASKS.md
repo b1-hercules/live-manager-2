@@ -4,7 +4,7 @@ Dibuat 2026-08-31. Update tiap ada progress: pindahkan item antar section, janga
 
 ## TODO (urut prioritas)
 
-_(kosong — seluruh gap yang disepakati sudah dikerjakan)_
+_(kosong — gap yang disepakati sudah dikerjakan)_
 
 ### Dropped
 - ~~Multi-user/team management (role, kuota per-user, status)~~ — **di-skip atas keputusan user (2026-08-31)**. Single-operator, kolom `role` di skema biarkan dead code, jangan dibangun.
@@ -14,6 +14,85 @@ _(kosong — seluruh gap yang disepakati sudah dikerjakan)_
 _(kosong)_
 
 ## DONE
+
+### Kebersihan daftar concat playlist — 2026-09-02
+Cacat yang tercatat di TODO pagi ini, sekarang ditutup. Yang paling mengganggu
+bukan berkas menumpuknya, melainkan **sebuah request GET yang menulis ke disk**:
+membuka halaman detail stream playlist memanggil `commandPreview()` →
+`resolveSource()` → `buildConcatSource()`, dan itu menulis berkas daftar.
+
+**Perilaku FFmpeg diuji dulu sebelum mendesain sweep** (bukan diasumsikan):
+berkas daftar concat **dipegang terbuka selama siaran berlangsung**. Percobaan
+menghapusnya di detik ke-3 dari siaran 12 detik ditolak sistem dengan
+`Device or resource busy`, sementara prosesnya jalan terus melewati tiga
+putaran dan keluar bersih. Karena itu sweep **melewati** siaran yang berjalan,
+bukan sekadar "sebaiknya jangan disentuh".
+
+- `services/ffmpeg.js` — `buildConcatSource(streamId, items, { write })`;
+  `write: false` menyusun sumber tanpa menyentuh disk, dipakai pratinjau.
+  Ditambah `concatPathFor()` (satu berkas per stream, bukan per playlist) dan
+  `sweepConcatFiles(isOrphan)` yang menerima predikat dari pemanggil — ffmpeg.js
+  sengaja tidak tahu-menahu soal peta `running`.
+- `services/streamManager.js` — `commandPreview` memakai `{ write: false }`;
+  `cleanupConcatFile()` kini juga dipanggil di **kedua** cabang terminal
+  `handleExit` (auto-restart mati, dan jatah restart habis) serta di `stop()`
+  saat prosesnya sudah tidak ada; `recoverOnBoot()` menyapu semua daftar sisa
+  (saat boot belum ada siaran berjalan, jadi semuanya pasti yatim);
+  `sweepConcatFiles()` diekspor untuk scheduler.
+- `services/scheduler.js` — sweep ikut pembersihan harian, di blok try sendiri
+  supaya kegagalannya tidak membatalkan pembersihan lain.
+
+**Impact analysis: HIGH** — `resolveSource` (16 simbol, 3 proses:
+`startDueStreams`, `commandPreview`, `timer` restart-otomatis) dan `handleExit`
+(8 simbol, proses `launch` ×7). Bukan false positive: keduanya memang diubah,
+dan jalur restart otomatis memanggil `start()` lagi sehingga daftar ditulis
+ulang — itulah sebabnya pembersihan hanya dipasang di cabang yang benar-benar
+terminal. Index GitNexus sempat hilang (`.gitnexus/lbug` tidak ada) dan dibangun
+ulang dulu sebelum analisis dipercaya.
+
+- Tes baru `tests/test-concat-cleanup.js`, 29/29 pass: 14 unit (dry-run tidak
+  menulis, isi & format daftar, cleanup idempoten, sweep hanya menyentuh yang
+  yatim dan tidak menyenggol berkas unggahan atau nama di luar pola), plus
+  integrasi — **membuka detail 4× tidak menulis apa pun**, siaran nyata menulis
+  daftarnya, sink RTMP dimatikan → siaran gagal permanen → daftar hilang, dan
+  daftar sisa dihapus saat aplikasi boot.
+- **Rotasi metadata × playlist dibuktikan bertumpuk**: siaran bersumber playlist
+  dengan rotasi aktif tetap menyimpan `rotation_state` dengan profil yang benar
+  dan menjalankan rotasi pertama (`rotate_on_start`). Memang tidak ada
+  ketergantungan di antara keduanya — `rotationEngine` bekerja dari
+  `youtube_video_id`/`resolved_video_id` (id broadcast YouTube), bukan dari
+  `streams.video_id` — tapi sekarang ada tesnya, bukan cuma pembacaan kode.
+- Suite penuh setelah perbaikan: **291 pass, 0 fail, 13/13 berkas**.
+
+### Tes masuk repo + dokumentasi menyusul fitur — 2026-09-02
+Bukan fitur baru; menutup dua utang yang menumpuk selama tujuh fitur terakhir.
+
+- **13 skrip tes dipindahkan dari folder temp ke `tests/`** (~262 assertion).
+  Sebelumnya seluruh bukti pengujian hidup di `%TEMP%` dan bisa hilang kapan saja
+  saat Windows membersihkannya, sementara repo sendiri nol tes. Path absolut
+  `D:/LIVE-MANAGER-2` diganti `path.resolve(__dirname, '..')`, dan
+  `require(path.join(ROOT, 'node_modules/better-sqlite3'))` disederhanakan jadi
+  `require('better-sqlite3')` — akal-akalan itu hanya perlu selagi skripnya di luar repo.
+- **`tests/run.js` + `npm test`** — menjalankan berurutan, bukan paralel, karena
+  tes integrasi memakai database kerja dengan pola backup/restore. Saringan nama
+  didukung (`npm test -- playlist`).
+- **Kunci `tests/.run.lock`.** Saat verifikasi, saya sendiri menjalankan
+  `test-disk.js` bersamaan dengan suite yang sedang berjalan: dua proses berebut
+  DB dan port 7598, hasilnya satu kegagalan palsu (11 pass, 1 fail) yang lulus
+  20/20 begitu dijalankan sendirian. Kunci ini menutup jalur itu, sekaligus
+  mencegah database kerja dikembalikan dari backup basi. `--force` untuk kunci
+  yang tertinggal dari proses mati.
+- Runner mengulang baris `FAIL` di ringkasan akhir dan membaca hitungan dari
+  kemunculan **terakhir**, supaya satu kegagalan tidak tenggelam di ratusan baris.
+- **README + `.env.example`**: tujuh fitur terakhir sebelumnya tidak tercatat sama
+  sekali di dokumen pengguna. Ditambahkan playlist (termasuk tabel keseragaman
+  Copy vs Re-encode), tiga jalur unggah, impor Drive berikut keharusan
+  menghubungkan ulang akun lama, pratinjau, monitor disk, bandwidth, validasi
+  magic byte, struktur berkas baru, `npm test`, dan 4 entri pemecahan masalah.
+- Berkas konfigurasi agen (`.claude/`, `.gitnexus/`, `CLAUDE.md`, `AGENTS.md`)
+  masuk `.gitignore` — keputusan user, dianggap konfigurasi lokal.
+- Verifikasi setelah pemindahan: **262 pass, 0 fail, 12/12 berkas** dari lokasi
+  barunya, plus app boot bersih dan skema DB tetap v4.
 
 ### Playlist multi-video — 2026-09-01
 Gap yang terlewat di analisis awal, ditemukan saat user bertanya "berapa video untuk
@@ -253,4 +332,7 @@ Hasil investigasi gap-analysis (GitNexus query/FTS lagi degraded di mesin ini �
 - **Node tidak punya API bawaan untuk throughput network**: `os.networkInterfaces()` hanya memberi alamat, bukan penghitung byte. Pilihannya cuma dependency (`systeminformation`), kode per-OS (`/proc/net/dev` + PowerShell), atau sumber lain. Dipilih: agregasi bitrate FFmpeg. Kalau nanti butuh total trafik mesin (bukan cuma siaran), keputusan ini perlu ditinjau ulang.
 - **`fetch()` + penanganan error server**: `wantsJson()` (`middleware/auth.js:54`) menilai dari `req.xhr`, awalan path `/api/`, atau header `Accept`. `fetch()` mengirim `Accept: */*`, jadi endpoint JSON di luar `/api/` mengembalikan **redirect HTML** saat error dan pesannya hilang. Setiap pemanggil fetch harus menyertakan `Accept: application/json`. Sudah diperbaiki di `LM.post` dan `LM.resumableUpload`; ingat ini kalau menambah pemanggil baru.
 - **WAL bisa menelan migrasi saat tes backup/restore DB**: `db/index.js` memakai `journal_mode = WAL`, jadi tulisan baru (termasuk migrasi) awalnya hanya ada di `livemanager.db-wal`. Pola tes "salin `.db` → jalankan → kembalikan `.db` + hapus `-wal`" **membuang** apa pun yang belum di-checkpoint. Migrasi v4 sempat hilang diam-diam karenanya (`user_version` balik ke 3, lalu `test-recoveronboot` gagal dengan "table streams has no column named playlist_id"). Perbaikannya: `pragma('wal_checkpoint(TRUNCATE)')` sebelum menyalin. Sudah ditambahkan ke semua skrip tes; ingat ini kalau membuat skrip baru yang menyentuh DB.
-- **Require dari scratchpad**: modul project bisa di-require lewat path absolut, tapi dependency-nya (mis. `better-sqlite3`) tidak — harus ditunjuk ke `<ROOT>/node_modules/<nama>` karena resolusi mengikuti lokasi file skrip, bukan cwd.
+- **Require dari scratchpad**: modul project bisa di-require lewat path absolut, tapi dependency-nya (mis. `better-sqlite3`) tidak — harus ditunjuk ke `<ROOT>/node_modules/<nama>` karena resolusi mengikuti lokasi file skrip, bukan cwd. Sejak tes pindah ke `tests/` (2026-09-02) ini tidak berlaku lagi untuk tes; masih berlaku untuk skrip sekali pakai di luar repo.
+- **FFmpeg memegang berkas daftar concat tetap terbuka selama siaran** (2026-09-02, diuji): `rm` pada berkas daftar di tengah siaran ditolak Windows dengan `Device or resource busy`, dan siaran tetap berjalan melewati putaran berikutnya. Konsekuensinya: pembersihan berkas daftar tidak boleh menyentuh siaran yang berjalan (di Windows memang mustahil, tapi jangan andalkan itu di Linux), dan `cleanupConcatFile` harus tetap menelan error — gagal menghapus bukan kondisi luar biasa.
+- **Status stream jangan dibaca dari HTML di dalam tes** (2026-09-02): halaman detail menampilkan baris log ber-level `ERROR` selagi siaran masih hidup, jadi mencocokkan kata "ERROR" di halaman membuat pemeriksaan lolos terlalu cepat — satu tes sempat gagal karena ini, bukan karena kodenya. Baca `streams.status` dari database lewat koneksi read-only.
+- **Tes tidak boleh dijalankan paralel** (2026-09-02): pola backup/restore DB membuat dua proses tes saling menimpa, dan port 7588–7599 dipakai bergantian. Gejalanya kegagalan yang tidak bisa diulang — satu berkas gagal di dalam suite, lulus penuh saat dijalankan sendirian. `tests/run.js` sekarang memasang kunci untuk mencegahnya; catatan lengkapnya di `tests/README.md`.
