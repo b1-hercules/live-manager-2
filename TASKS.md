@@ -284,6 +284,34 @@ karena `COPY . .` tanpa `.dockerignore` (lihat FINDINGS), bukan karena liquidsoa
 
 ## DONE
 
+### Panduan urutan persiapan + modal Drive yang tak bisa ditutup — 2026-09-10
+
+Diminta user: README belum menjelaskan cara menjalankan dengan Docker, cara
+menghentikan `npm start`, dan urutan persiapan setelah masuk dashboard ("OAuth
+dulu atau video dulu?"). Dilaporkan sekaligus: di `/videos` langsung muncul
+modal "Impor dari Google Drive" dan tombol Tutup-nya tidak berfungsi.
+
+- `public/css/app.css` — `[hidden] { display: none !important; }`. Penyebabnya di
+  FINDINGS. Ikut membereskan tombol **Batal** unggahan (`.btn`, inline-flex) yang
+  selama ini selalu terlihat.
+- Tes baru `tests/test-hidden-attr.js` (statis, tanpa browser): memindai
+  `views/` untuk elemen ber-`hidden` yang kelasnya menyetel `display`.
+  **Dibuktikan merah dulu** — 2 pass, 1 fail — lalu hijau 3/3 setelah aturan
+  dipasang.
+- `README.md` — bagian baru **Mulai cepat: urutan persiapan** (9 langkah; mana
+  yang wajib dan mana yang khusus fitur Google), **Menghentikan aplikasi**,
+  Docker ditulis ulang (pasang plugin compose, pindah dari `npm start`, perintah
+  sehari-hari, kepemilikan berkas root), **Membuka dashboard dari VPS** (SSH
+  tunnel, batasan redirect URI Google), dan entri pemecahan masalah baru.
+- `views/accounts/index.ejs` + README — petunjuk Google Cloud kini menyebut
+  **Google Drive API**, bukan hanya YouTube Data API v3.
+
+Tidak ada fungsi JS yang disentuh (hanya CSS, template, dan dokumentasi), jadi
+tidak ada impact analysis per simbol. Urutan checklist di dashboard sengaja tidak
+diubah — README menjelaskan bahwa kotak itu checklist, bukan urutan. Belum
+dilihat di browser sungguhan karena mesin ini tidak punya browser; buktinya tes
+statis di atas plus aturan kaskade CSS.
+
 ### Lapisan media: berkas musik masuk ke daftar yang sama — 2026-09-09
 
 Fondasi untuk siaran ala radio, dan sepenuhnya berdiri sendiri: tidak ada
@@ -721,3 +749,7 @@ Hasil investigasi gap-analysis (GitNexus query/FTS lagi degraded di mesin ini �
 - **Liquidsoap menolak jalan sebagai root — dan container menjalankan aplikasi sebagai root** (2026-09-10, diuji di container setelah `:=` diperbaiki): `init: security exit, root euid & guid (user & group). Override with settings.init.allow_root.set(true)`, kode keluar 255. `Dockerfile` tidak punya `USER`, jadi setiap siaran radio di image Docker gagal di sini. Hal yang sama berlaku untuk instalasi PM2 yang dijalankan sebagai root di VPS. Dengan perbaikan langkah 6, kegagalan ini tampil sebagai error berisi kalimat liquidsoap tersebut, bukan restart berulang. **Diperbaiki** atas keputusan user dengan `settings.init.allow_root.set(true)` di skrip — liquidsoap hanya menyamai hak proses Node yang menjalankannya, harbor tetap loopback, tanpa telnet; `USER node` di Dockerfile ditolak karena mematahkan kepemilikan volume instalasi lama. Uji asap sesudahnya: **2.1.3 sebagai root** — harbor 127.0.0.1 terbuka setelah 7,2 dtk, rekaman 10 dtk bersuara (−20,3 dB), reload watch memutar lagu baru; **2.2.4 non-root** — setelan itu tidak mengganggu (harbor 15,6 dtk, rekaman utuh, reload bekerja).
 - **FFmpeg 5.1 (image Docker) MASIH mencetak `frame=` pada mode copy** (2026-09-10, argumen persis aplikasi): `frame=  190 fps= 25 q=-1.0 Lsize=     125kB time=00:00:07.50 bitrate= 136.4kbits/s speed=   1x`. Jadi masalah `STATS_RE` hanya mengenai instalasi bare-metal dengan FFmpeg ≥6.1, bukan image Docker.
 - **`COPY . .` menimpa `node_modules` hasil `npm install` di image** (2026-09-10, diuji): `nodemon` — devDependency — ada di image padahal `npm install --omit=dev`. (Hash `better_sqlite3.node` yang sama dengan host ternyata BUKAN bukti, meski sempat dipakai begitu: setelah `.dockerignore` dipasang pun hash di image tetap `d7d9272b12d11c1d`, karena host dan image sama-sama mengunduh prebuilt Node 22 linux-x64 yang identik.) Repo tidak punya `.dockerignore`, sehingga ikut tersalin: `node_modules` host (147 MB), `.gitnexus` (57 MB), `.git`, `.claude/`, dan `db/livemanager.db` (database kerja, berisi token terenkripsi) — begitu pula `.env` kalau ada di mesin build. Konsekuensi yang disimpulkan (belum diuji): image yang dibangun dari host Windows akan membawa binary `better-sqlite3` win32 ke container Linux. Masalah lama; Dockerfile di HEAD punya `COPY . .` yang sama. **Diperbaiki dengan `.dockerignore`** atas keputusan user: konteks build turun dari ±200 MB jadi 1,0 MB, image 1,67 GB (dari 1,91 GB); `.git`, `.gitnexus`, `.claude`, dan database kerja tidak lagi ada di image, `nodemon` hilang (node_modules kini hasil `npm install --omit=dev` image sendiri), better-sqlite3 tetap termuat, dan uji asap radio di container tetap lulus.
+- **Atribut `hidden` kalah oleh kelas yang menyetel `display`** (2026-09-10, dilaporkan user): `display: none` untuk `[hidden]` hanya ada di stylesheet user-agent, dan aturan penulis mana pun mengalahkannya. `#driveModal` membawa `hidden`, tetapi `.modal-backdrop { display: grid }` — jadi modal Impor dari Drive tampil sejak `/videos` dibuka, isinya hanya kolom pencarian (daftarnya baru dimuat saat tombol Impor ditekan), dan `close()` yang cuma menyetel `modal.hidden = true` tidak mengubah tampilan sama sekali. `#uploadCancel` (`.btn`, inline-flex) kena hal yang sama: tombol Batal unggahan selalu terlihat. Diperbaiki dengan `[hidden] { display: none !important; }`; `!important` perlu karena `[hidden]` dan `.btn` sama spesifisitasnya (0,1,0), sehingga tanpa itu urutan di berkas yang menentukan. Mesin ini tidak punya browser, jadi penjaganya tes statis `tests/test-hidden-attr.js`.
+- **Paket `docker.io` Ubuntu tidak membawa `docker compose`** (2026-09-10): Docker 29.1.3 dari paket `docker.io` menjawab `docker compose version` dengan `docker: unknown command: docker compose`. Plugin-nya paket terpisah: `docker-compose-v2` (Ubuntu universe, kandidat 2.40.3), atau `docker-compose-plugin` kalau Docker dipasang dari repo docker.com. Perintah `docker compose up -d` di README lama gagal apa adanya di mesin ini. Belum dipasang (butuh sudo).
+- **Google menolak redirect URI berupa IP atau non-HTTPS, kecuali localhost** (2026-09-10, dari dokumentasi OAuth 2.0 web server Google, bagian *Redirect URI validation*): "Hosts cannot be raw IP addresses. Localhost IP addresses are exempted from this rule." dan "Redirect URIs must use the HTTPS scheme … Localhost URIs … are exempt". Akibatnya dashboard yang dibuka lewat `http://IP-VPS:7575` bisa dipakai menyiarkan, tetapi **tidak bisa** menghubungkan channel. Tanpa domain: SSH tunnel (`ssh -L 7575:localhost:7575 …`) dengan `APP_URL=http://localhost:7575`. Dengan domain: Nginx + HTTPS.
+- **Impor Drive butuh Google Drive API aktif di project Google Cloud, bukan hanya scope-nya** (2026-09-10, dari pembacaan kode): `services/drive.js` memanggil Drive API v3, tetapi README dan petunjuk di halaman Akun hanya menyuruh mengaktifkan YouTube Data API v3. Scope `drive.readonly` diberikan saat menghubungkan channel, namun panggilan pertama tetap ditolak kalau API-nya tidak diaktifkan di project. Kedua petunjuk kini menyebut Google Drive API.

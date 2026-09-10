@@ -12,17 +12,70 @@ gampang di-deploy.
 
 ## Daftar Isi
 
+- [Mulai cepat: urutan persiapan](#mulai-cepat-urutan-persiapan) ← **baca ini dulu**
 - [Fitur](#fitur)
 - [Cara kerja rotasi metadata](#cara-kerja-rotasi-metadata)
 - [Batas kuota YouTube API](#batas-kuota-youtube-api-baca-ini-dulu)
 - [Kebutuhan sistem](#kebutuhan-sistem)
-- [Instalasi](#instalasi)
+- [Instalasi](#instalasi) — termasuk cara menghentikan aplikasi
 - [Menghubungkan channel YouTube](#menghubungkan-channel-youtube)
 - [Panduan pemakaian](#panduan-pemakaian)
-- [Deployment](#deployment)
+- [Deployment](#deployment) — Docker, membuka dashboard dari VPS, PM2, Nginx
 - [Struktur proyek](#struktur-proyek)
 - [Pemecahan masalah](#pemecahan-masalah)
 - [Catatan keamanan](#catatan-keamanan)
+
+---
+
+## Mulai cepat: urutan persiapan
+
+Kerjakan **dari atas ke bawah** — tiap langkah bergantung pada langkah sebelumnya.
+
+**Pertanyaan pertama: butuh fitur Google atau tidak?** Menyiarkan ke YouTube, Facebook, TikTok,
+dan lainnya **tidak butuh OAuth sama sekali** — cukup file video dan stream key. Kredensial Google
+(OAuth) hanya dipakai dua fitur:
+
+- rotasi judul, thumbnail, deskripsi, dan tags siaran YouTube, dan
+- **Impor dari Drive** di Galeri Video.
+
+Kalau belum butuh keduanya, lewati langkah bertanda *(Google)*.
+
+1. **Isi `.env`, lalu jalankan aplikasi** — lewat [Docker](#docker-disarankan-untuk-vps)
+   (disarankan untuk VPS) *atau* [`npm start`](#instalasi), jangan keduanya bersamaan. Tiga nilai
+   ini wajib benar **sebelum** start pertama:
+   - `SESSION_SECRET` dan `ENCRYPTION_KEY` — dari `npm run generate-secret`. `ENCRYPTION_KEY`
+     mengunci stream key dan token Google; menggantinya belakangan berarti mengisi ulang semuanya.
+   - `APP_URL` — alamat yang **persis** kamu ketik di browser. Nilai ini menjadi redirect URI
+     OAuth di langkah 4, dan Google hanya menerima `http://localhost:…` atau `https://domain`,
+     **bukan** `http://IP-VPS:7575`. VPS tanpa domain: pakai
+     [SSH tunnel](#membuka-dashboard-dari-vps).
+2. **Buat akun admin** — halaman Setup muncul sekali, saat aplikasi pertama kali dibuka.
+3. **Pastikan FFmpeg terdeteksi** — Dashboard → kartu **Sistem** → FFmpeg `terdeteksi`. Tanpa
+   FFmpeg siaran tidak bisa dimulai. Image Docker sudah membawanya.
+4. *(Google)* **Buat OAuth Client di Google Cloud, lalu isi Client ID & Secret di Pengaturan** —
+   rinciannya di [Menghubungkan channel YouTube](#menghubungkan-channel-youtube). Aktifkan
+   **YouTube Data API v3** *dan* **Google Drive API**.
+5. *(Google)* **Akun YouTube → Hubungkan Channel.** Butuh langkah 4. Baru setelah langkah ini
+   tombol **Impor dari Drive** bisa menampilkan isi Drive.
+6. **Galeri Video → unggah video** dari komputer, atau **Impor dari Drive** kalau langkah 5 sudah
+   selesai. Untuk mode Copy, videonya harus H.264.
+7. **Tujuan RTMP → tambah tujuan** — tempel stream key dari YouTube Studio (atau dari platform
+   lain).
+8. *(Google)* **Profil Rotasi → Profil Baru** — daftar judul/thumbnail yang akan digilir.
+9. **Stream → Stream Baru** — pilih video (langkah 6) dan tujuan (langkah 7). Kalau memakai
+   rotasi, pilih juga profil (langkah 8) dan channel (langkah 5). Tekan **Mulai Siaran**.
+
+Jadi, **OAuth dulu atau video dulu?**
+
+| Kasus | Urutan langkah |
+|---|---|
+| Video dari komputer, tanpa rotasi | 1 → 2 → 3 → 6 → 7 → 9. OAuth tidak perlu. |
+| Video diambil dari Google Drive | OAuth **dulu** (4 → 5), baru impor di langkah 6. |
+| Ingin rotasi judul/thumbnail | Semua langkah, 1 sampai 9. |
+
+> Kotak **Langkah Persiapan** di Dashboard adalah checklist, bukan urutan. Tiga butirnya —
+> kredensial OAuth, channel YouTube, dan profil rotasi — opsional, jadi kotak itu boleh tetap
+> belum 6/6 kalau kamu tidak memakai fitur Google.
 
 ---
 
@@ -178,6 +231,18 @@ PATH, atau isi `FFMPEG_PATH` dan `FFPROBE_PATH` di `.env`.
 
 ## Instalasi
 
+Ada dua cara menjalankan LiveManager — **pilih salah satu, jangan keduanya bersamaan**. Keduanya
+berebut port 7575 dan memakai database yang sama, sehingga penjadwal dan siaran bisa berjalan dobel.
+
+- **Docker** — disarankan untuk VPS. FFmpeg dan liquidsoap sudah ada di dalam image, jadi tidak
+  ada yang perlu dipasang selain Docker. Langkahnya di [Docker](#docker-disarankan-untuk-vps).
+- **Langsung dengan Node** (`npm start`) — dijelaskan di bawah. FFmpeg (dan liquidsoap untuk siaran
+  radio) harus dipasang sendiri.
+
+> Di Ubuntu 24.04, FFmpeg 6.1 bawaan sistem tidak mencetak `frame=`/`fps=` pada mode Copy, sehingga
+> angka FPS, bitrate, dan bandwidth keluar tetap kosong walau siarannya berjalan normal. FFmpeg 5.1
+> di image Docker tidak kena masalah ini.
+
 ```bash
 git clone <repo-kamu> livemanager
 cd livemanager
@@ -201,7 +266,29 @@ npm start
 ```
 
 Buka `http://localhost:7575`. Halaman **Setup** akan muncul untuk membuat akun admin — halaman ini
-hanya tampil sekali.
+hanya tampil sekali. Setelah itu ikuti [urutan persiapan](#mulai-cepat-urutan-persiapan).
+
+### Menghentikan aplikasi
+
+Bagian ini untuk `npm start`. Untuk Docker, lihat
+[perintah sehari-hari Docker](#docker-disarankan-untuk-vps).
+
+- **Terminal tempat `npm start` berjalan masih terbuka:** tekan **Ctrl+C**. Aplikasi menghentikan
+  semua siaran dengan rapi dulu, lalu keluar — tunggu sampai log mencetak `Selesai.` (paling lama
+  ±10 detik).
+- **Terminalnya sudah ditutup, atau berjalan di latar** (`nohup`, `screen`, `tmux`): cari PID yang
+  memegang port 7575, lalu kirim sinyal berhenti biasa.
+
+  ```bash
+  ss -ltnp | grep 7575     # contoh keluaran: users:(("node",pid=12345,fd=21))
+  kill 12345               # ganti dengan PID milikmu; sama rapinya dengan Ctrl+C
+  ```
+
+  Kalau kolom `users:` kosong, prosesnya milik user lain — ulangi kedua perintah dengan `sudo`.
+  Hindari `kill -9`: penutupan rapi dilewati, dan status siaran baru dibereskan saat aplikasi
+  dinyalakan lagi.
+- **Dijalankan lewat PM2:** `pm2 stop livemanager`. Supaya tidak ikut hidup lagi saat server
+  reboot, lanjutkan dengan `pm2 delete livemanager && pm2 save`.
 
 ### Catatan untuk npm 12+
 
@@ -221,7 +308,9 @@ Rotasi metadata butuh OAuth Client milikmu sendiri. Google tidak mengizinkan apl
 memakai kredensial bersama untuk ini.
 
 1. Buka [Google Cloud Console](https://console.cloud.google.com/), buat project baru.
-2. **APIs & Services → Library** → aktifkan **YouTube Data API v3**.
+2. **APIs & Services → Library** → aktifkan **YouTube Data API v3**. Kalau ingin memakai
+   **Impor dari Drive**, aktifkan juga **Google Drive API** — tanpanya daftar Drive gagal dengan
+   *"Google Drive API has not been used in project … before or it is disabled"*.
 3. **OAuth consent screen** → pilih *External*, isi nama aplikasi, lalu tambahkan email Google kamu
    sebagai **Test user**.
 4. **Credentials → Create Credentials → OAuth client ID** → tipe **Web application**.
@@ -233,6 +322,10 @@ memakai kredensial bersama untuk ini.
 
    Ganti sesuai `APP_URL` milikmu. Alamat yang benar selalu ditampilkan di halaman
    **Pengaturan** aplikasi — salin dari sana agar tidak salah ketik.
+
+   Google hanya menerima `http://localhost…` atau `https://…`. Alamat IP seperti
+   `http://203.0.113.5:7575/…` **ditolak** saat disimpan. Dari VPS tanpa domain, pakai
+   [SSH tunnel](#membuka-dashboard-dari-vps).
 
 6. Salin **Client ID** dan **Client Secret** ke halaman **Pengaturan** LiveManager.
 7. Buka halaman **Akun YouTube** → **Hubungkan Channel**.
@@ -344,27 +437,76 @@ yang paling menarik penonton.
 
 ## Deployment
 
-### PM2
+### Docker (disarankan untuk VPS)
+
+Image membawa FFmpeg 5.1 dan liquidsoap, jadi di server cukup ada Docker. Data hidup di folder
+`storage/`, `db/`, dan `logs/` milik host (di-mount sebagai volume), sehingga bertahan melewati
+rebuild maupun `docker compose down`.
+
+**1. Pasang Docker beserta plugin Compose** (Ubuntu 24.04):
 
 ```bash
-npm install -g pm2
-pm2 start ecosystem.config.js
-pm2 save
-pm2 startup
+sudo apt update
+sudo apt install -y docker.io docker-compose-v2
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER    # logout lalu login lagi supaya docker bisa dipakai tanpa sudo
+docker compose version           # harus mencetak nomor versi
 ```
 
-Jalankan **satu instance saja**. Proses FFmpeg dan penjadwal rotasi disimpan di memori proses, jadi
-cluster mode akan menjalankan siaran yang sama berkali-kali.
+Paket `docker.io` saja **tidak** membawa perintah `docker compose` — gejalanya
+`docker: unknown command: docker compose`. Kalau Docker dipasang dari repo resmi docker.com, nama
+paket plugin-nya `docker-compose-plugin`.
 
-### Docker
+**2. Kalau aplikasi masih berjalan lewat `npm start`, hentikan dulu** — lihat
+[Menghentikan aplikasi](#menghentikan-aplikasi). Container memakai folder `db/` dan `storage/` yang
+sama, jadi akun admin, video, tujuan RTMP, dan channel yang sudah dibuat tetap ada — asalkan isi
+`.env` tidak diubah.
+
+**3. Siapkan `.env`** di folder proyek. Berkas ini dibaca `docker compose`, tidak ikut masuk image.
 
 ```bash
-cp .env.example .env
-npm run generate-secret   # salin hasilnya ke .env
-docker compose up -d
+cp .env.example .env     # lewati kalau .env sudah ada dari npm start — JANGAN ganti kuncinya
 ```
 
-Folder `storage/`, `db/`, dan `logs/` di-mount sebagai volume agar bertahan melewati rebuild.
+Isi `SESSION_SECRET` dan `ENCRYPTION_KEY`. Kalau ada Node di host, pakai `npm run generate-secret`.
+Tanpa Node:
+
+```bash
+echo "SESSION_SECRET=$(openssl rand -hex 48)"
+echo "ENCRYPTION_KEY=$(openssl rand -hex 32)"
+```
+
+Lalu isi `APP_URL` — baca [Membuka dashboard dari VPS](#membuka-dashboard-dari-vps) sebelum
+memilih nilainya. Yang diteruskan ke container hanya `APP_URL`, `SESSION_SECRET`,
+`ENCRYPTION_KEY`, `TZ`, dan `MAX_UPLOAD_MB` (lihat `docker-compose.yml`); `FFMPEG_PATH` dan
+sejenisnya tidak dibutuhkan di sini.
+
+**4. Bangun dan jalankan:**
+
+```bash
+docker compose up -d --build     # build pertama makan beberapa menit
+docker compose logs -f           # tunggu "LiveManager berjalan di ..."; Ctrl+C hanya keluar dari log
+```
+
+Container menyala lagi sendiri setelah server reboot (`restart: unless-stopped`). Setelah itu buka
+dashboard dan ikuti [urutan persiapan](#mulai-cepat-urutan-persiapan).
+
+**Perintah sehari-hari** (jalankan dari folder proyek):
+
+| Perintah | Fungsi |
+|---|---|
+| `docker compose ps` | status; kolom STATUS menjadi `healthy` begitu `/health` menjawab |
+| `docker compose logs -f --tail 100` | ikuti log aplikasi |
+| `docker compose stop` | **hentikan** aplikasi; siaran ikut dihentikan dengan rapi |
+| `docker compose start` | nyalakan lagi |
+| `docker compose restart` | restart aplikasi |
+| `docker compose up -d` | terapkan perubahan `.env` — `restart` saja tidak membacanya ulang |
+| `docker compose down` | hentikan dan hapus container; data di `storage/`, `db/`, `logs/` tetap aman |
+| `git pull && docker compose up -d --build` | perbarui ke versi terbaru |
+
+Di dalam container aplikasi berjalan sebagai **root**, jadi berkas baru di `storage/`, `db/`, dan
+`logs/` dimiliki root. Kalau suatu saat kembali ke `npm start` sebagai user biasa, kembalikan dulu
+kepemilikannya: `sudo chown -R $USER:$USER storage db logs`.
 
 Image sudah membawa liquidsoap untuk siaran ala radio (menambah ±100 MB di disk). Liquidsoap
 butuh ±7–20 detik sebelum siap, jadi tombol **Mulai** pada siaran radio baru menjawab setelah
@@ -375,6 +517,51 @@ bisa dijangkau dari dalam container (harbor terikat ke `127.0.0.1`).
 `.dockerignore` menjaga image tetap bersih: `.env`, database, isi `storage/`, dan `node_modules`
 dari mesin build tidak ikut disalin — dependensi dipasang ulang di dalam image, dan data hidup di
 volume di atas.
+
+### Membuka dashboard dari VPS
+
+Google menolak redirect URI OAuth yang berupa alamat IP atau tidak memakai HTTPS — kecuali
+`localhost`. Karena itu cara membuka dashboard menentukan apakah fitur Google (rotasi metadata dan
+Impor dari Drive) bisa dipakai:
+
+| Cara membuka dashboard | Isi `APP_URL` | Siaran & unggah | Hubungkan channel (OAuth) |
+|---|---|---|---|
+| `http://IP-VPS:7575` | `http://IP-VPS:7575` | bisa | **tidak bisa** — lalu lintasnya juga tidak terenkripsi |
+| SSH tunnel, lalu `http://localhost:7575` | `http://localhost:7575` | bisa | bisa |
+| Domain + [Nginx](#di-belakang-nginx) + HTTPS | `https://live.domainkamu.com` | bisa | bisa |
+
+**SSH tunnel** adalah jalan termudah kalau belum punya domain. Jalankan di komputermu sendiri,
+bukan di VPS:
+
+```bash
+ssh -L 7575:localhost:7575 user@IP-VPS
+```
+
+Biarkan sesi SSH itu terbuka, lalu buka `http://localhost:7575` di browser komputermu. Tunnel hanya
+perlu terbuka selama kamu memakai dashboard — siaran dan rotasi tetap berjalan di VPS setelah
+tunnel ditutup.
+
+Dengan tunnel, port 7575 tidak perlu terbuka ke internet. Untuk menutupnya:
+
+- **Docker** — ubah `ports` di `docker-compose.yml` menjadi `"127.0.0.1:7575:7575"`, lalu
+  `docker compose up -d`. Memblokir lewat `ufw` saja **tidak cukup**: port yang dipublikasikan
+  Docker melewati aturan ufw.
+- **`npm start`** — set `HOST=127.0.0.1` di `.env`, lalu restart aplikasi.
+
+### PM2
+
+Alternatif Docker untuk yang menjalankan langsung dengan Node: aplikasi tetap hidup setelah
+terminal ditutup dan menyala lagi setelah server reboot.
+
+```bash
+npm install -g pm2
+pm2 start ecosystem.config.js
+pm2 save
+pm2 startup
+```
+
+Jalankan **satu instance saja**. Proses FFmpeg dan penjadwal rotasi disimpan di memori proses, jadi
+cluster mode akan menjalankan siaran yang sama berkali-kali.
 
 ### Di belakang Nginx
 
@@ -451,6 +638,32 @@ tests/                    skrip tes Node polos — lihat tests/README.md
 ---
 
 ## Pemecahan masalah
+
+**`docker: unknown command: docker compose`**
+Plugin Compose belum terpasang — paket `docker.io` tidak membawanya. Pasang
+`sudo apt install -y docker-compose-v2` (atau `docker-compose-plugin` untuk Docker dari repo
+docker.com), lihat [Docker](#docker-disarankan-untuk-vps).
+
+**Port 7575 sudah dipakai (`EADDRINUSE`, `address already in use`, `port is already allocated`)**
+Aplikasi sudah berjalan dengan cara lain — biasanya `npm start` yang belum dimatikan saat mencoba
+Docker, atau sebaliknya. Hentikan salah satunya dulu ([Menghentikan aplikasi](#menghentikan-aplikasi)
+atau `docker compose stop`). Jangan jalankan keduanya: mereka memakai database yang sama.
+
+**`Error 400: redirect_uri_mismatch` saat Hubungkan Channel**
+Redirect URI di Google Cloud Console tidak persis sama dengan yang tertulis di halaman
+**Pengaturan**. Salin ulang dari sana. Kalau `APP_URL` baru saja diubah, perbarui juga
+redirect URI-nya di Google Cloud, dan untuk Docker jalankan `docker compose up -d` supaya
+`APP_URL` baru terbaca. Kalau Google menolak menyimpan redirect URI karena berisi alamat IP, pakai
+[SSH tunnel atau domain](#membuka-dashboard-dari-vps).
+
+**`EACCES: permission denied` di `storage/`, `db/`, atau `logs/`**
+Biasanya muncul saat kembali ke `npm start` setelah memakai Docker: container menulis berkas sebagai
+root. Kembalikan kepemilikannya dengan `sudo chown -R $USER:$USER storage db logs`.
+
+**Impor dari Drive: "Google Drive API has not been used in project … before or it is disabled"**
+Scope Drive sudah diberikan, tetapi API-nya belum diaktifkan di project Google Cloud. Buka
+**APIs & Services → Library → Google Drive API → Enable**, tunggu beberapa menit, lalu coba lagi.
+Channel tidak perlu dihubungkan ulang.
 
 **Siaran langsung berhenti setelah dimulai**
 Buka halaman detail stream dan baca log. Penyebab tersering: stream key salah, atau sumber bukan
