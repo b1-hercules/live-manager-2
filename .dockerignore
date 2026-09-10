@@ -1,0 +1,31 @@
+# Konteks build Docker. Tanpa berkas ini `COPY . .` menyalin semuanya ke image:
+# node_modules host (menimpa hasil `npm install --omit=dev` di image — terbukti
+# dari nodemon, sebuah devDependency, yang ikut ada di image; build dari Windows
+# akan membawa binary win32), indeks .gitnexus, riwayat .git, .env berisi
+# SESSION_SECRET/ENCRYPTION_KEY, dan database kerja berisi token terenkripsi.
+
+node_modules
+.git
+.gitnexus
+.claude
+CLAUDE.md
+AGENTS.md
+
+.env
+.env.*
+!.env.example
+
+# Hanya berkas database; db/index.js dan db/migrate.js adalah kode.
+db/*.db
+db/*.db-*
+db/*.db.*
+
+# Data pengguna hidup di volume (lihat docker-compose.yml); Dockerfile membuat
+# ulang foldernya dengan `mkdir -p`.
+storage/videos/*
+storage/thumbnails/*
+storage/tmp/*
+!storage/**/.gitkeep
+logs
+
+tests/.run.lock

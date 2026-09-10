@@ -24,9 +24,18 @@ yang gagal; `run.js` mengandalkan dua hal itu.
 - **ffmpeg & ffprobe di PATH** — sebagian besar fixture (video H.264, MKV, AVI,
   FLV, MPEG-TS, berkas tanpa audio) dibuat sungguhan saat tes berjalan, bukan
   disimpan di repo. Tes siaran juga benar-benar menjalankan FFmpeg.
-- **Port 7588–7599** bebas. Tiap tes integrasi mem-boot app di portnya sendiri; yang
-  memakai sink RTMP lokal juga memakai port yang sama + 100.
-- **Database kerja `db/livemanager.db`** — baca bagian berikut sebelum menjalankan.
+- **liquidsoap di PATH** (atau `LIQUIDSOAP_PATH`) — hanya untuk `test-radio-live.js`,
+  yang menjalankan siaran radio sungguhan. Tanpa liquidsoap, berkas itu mencetak
+  `SKIP` dan dihitung lulus kosong, bukan gagal.
+- **Port 7587–7599** bebas. Tiap tes integrasi mem-boot app di portnya sendiri; yang
+  memakai sink RTMP lokal juga memakai port yang sama + 100 (`test-stop-restart-delay.js`
+  justru sengaja menunjuk 7687 yang TIDAK didengarkan, supaya FFmpeg gagal seketika). `test-radio-live.js`
+  (port 7596) juga memakai 7796–7800 untuk uji `waitForHarbor`, dan app yang
+  di-boot-nya mengalokasikan port harbor dari 8300.
+- **Database kerja `db/livemanager.db` yang sudah dimigrasi** — di checkout baru
+  berkas ini belum ada (di-`.gitignore`), jadi jalankan `npm run migrate` sekali
+  sebelum `npm test`. Tanpa itu tes pertama membuat berkas kosong dan 13 berkas
+  gagal dengan `no such table: users`. Baca juga bagian berikut.
 
 ## Database: backup, jalankan, kembalikan
 
@@ -59,8 +68,15 @@ menambal modul sebelum boot, supaya cabang yang sulit dibuat nyata tetap teruji:
 | `boot-drive.js` | `drive.listVideos/fileInfo/download` | impor Drive tanpa OAuth |
 
 Tes yang butuh siaran sungguhan (`test-playlist-e2e.js`, `test-concat-cleanup.js`,
-`test-single-video-regression.js`) menjalankan sink RTMP dari FFmpeg sendiri
-(`-listen 1`) supaya siaran benar-benar mengalir, bukan disimulasikan.
+`test-single-video-regression.js`, `test-radio-live.js`) menjalankan sink RTMP dari
+FFmpeg sendiri (`-listen 1`) supaya siaran benar-benar mengalir, bukan disimulasikan.
+
+Di FFmpeg 6.1 (Ubuntu 24.04), tiga tes video pertama gagal di asersi "benar-benar
+mengalir" meski siarannya mengalir: pada mode copy, baris progres FFmpeg 6.1 tidak
+lagi memuat `frame=`/`fps=`, sehingga `STATS_RE` di `streamManager.js` tidak pernah
+cocok dan `stats.frame` tetap 0. Ini soal versi FFmpeg, bukan tesnya — lihat
+FINDINGS di `TASKS.md`. `test-radio-live.js` tidak terdampak karena mode radio
+me-re-encode video.
 
 ## Catatan yang mudah terlupa
 

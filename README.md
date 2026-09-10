@@ -154,6 +154,8 @@ selalu disetujui. Cara yang lebih praktis: pakai project Google Cloud terpisah u
 
 - **Node.js 18+** (diuji pada Node 22)
 - **FFmpeg + ffprobe** terpasang dan bisa diakses dari PATH
+- **Liquidsoap 2.x** — hanya untuk siaran ala radio (musik + gambar latar). Siaran video tidak
+  membutuhkannya. Sudah termasuk di image Docker.
 - **1 core CPU / 1 GB RAM** untuk mode Copy. Mode Re-encode 1080p butuh setidaknya 2 core.
 - Port `7575` (bisa diubah)
 
@@ -364,6 +366,16 @@ docker compose up -d
 
 Folder `storage/`, `db/`, dan `logs/` di-mount sebagai volume agar bertahan melewati rebuild.
 
+Image sudah membawa liquidsoap untuk siaran ala radio (menambah ±100 MB di disk). Liquidsoap
+butuh ±7–20 detik sebelum siap, jadi tombol **Mulai** pada siaran radio baru menjawab setelah
+liquidsoap benar-benar melayani audio — bukan tanda macet. Di dalam container aplikasi berjalan
+sebagai root, sehingga skrip liquidsoap mengizinkan root secara eksplisit; audionya tetap hanya
+bisa dijangkau dari dalam container (harbor terikat ke `127.0.0.1`).
+
+`.dockerignore` menjaga image tetap bersih: `.env`, database, isi `storage/`, dan `node_modules`
+dari mesin build tidak ikut disalin — dependensi dipasang ulang di dalam image, dan data hidup di
+volume di atas.
+
 ### Di belakang Nginx
 
 ```nginx
@@ -463,6 +475,19 @@ Isi playlist tidak seragam. Pesannya menyebut sebabnya: resolusi berbeda, codec 
 sebagian video tidak punya audio. Dua yang pertama selesai dengan pindah ke mode Re-encode; yang
 ketiga harus dibereskan di berkasnya (tambahkan track audio senyap, atau keluarkan video itu dari
 playlist).
+
+**"Liquidsoap gagal disiapkan: …" pada siaran radio**
+Siaran radio menjalankan liquidsoap lebih dulu dan baru menyalakan FFmpeg setelah liquidsoap siap.
+Kalau langkah itu gagal, siaran langsung ditandai error — tidak diulang otomatis, karena mengulang
+tidak akan menolong. Lanjutan pesannya menyebut sebabnya:
+- *liquidsoap tidak ditemukan* — paketnya belum terpasang (`sudo apt install -y liquidsoap`), atau
+  isi `LIQUIDSOAP_PATH` di `.env` dengan lokasi binary-nya. Image Docker sudah membawanya.
+- *liquidsoap keluar sebelum harbor siap (kode N)* — diikuti baris terakhir keluaran liquidsoap
+  sendiri, yang biasanya langsung menunjuk masalahnya.
+- *harbor liquidsoap tidak terbuka dalam 45 detik* — mesin terlalu sibuk atau terlalu lemah.
+  Liquidsoap butuh ±7–20 detik untuk siap di mesin 4 core.
+
+Setelah sebabnya dibereskan, tekan **Mulai** lagi.
 
 **Tombol Impor dari Drive bilang akunnya belum diberi izin**
 Akun itu dihubungkan sebelum izin `drive.readonly` ditambahkan. Buka **Akun YouTube** lalu hubungkan
