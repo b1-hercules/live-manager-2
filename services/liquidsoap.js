@@ -2,6 +2,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const net = require('net');
 const { spawn, execFile } = require('child_process');
 const config = require('../config');
 const { createLogger } = require('../utils/logger');
@@ -120,6 +121,107 @@ function harborUrl(port) {
   return `http://127.0.0.1:${port}${HARBOR_MOUNT}`;
 }
 
+// Liquidsoap sungguhan butuh ±15 detik sebelum harbor terbuka (diukur di mesin
+// 4 core: "Standard library loaded in 13.93 seconds", tanpa cache antar-putaran).
+// 45 detik memberi mesin yang lebih lemah tiga kali ruang, dan tetap di bawah
+// batas 60 detik bawaan proxy_read_timeout Nginx — tombol Mulai siaran radio
+// menunggu sampai harbor siap.
+const HARBOR_READY_TIMEOUT_MS = 45000;
+const HARBOR_POLL_MS = 250;
+
+/**
+ * Tunggu sampai harbor benar-benar menerima koneksi TCP.
+ *
+ * Menolak secepatnya kalau prosesnya gagal: spawn() TIDAK melempar untuk binary
+ * yang tidak ada — kegagalannya datang sebagai event 'error' (ENOENT) disusul
+ * 'close' (kode -2), jadi di sinilah kegagalan itu tertangkap. Proses yang
+ * keluar lebih dulu (skrip ditolak, menolak jalan sebagai root) juga ditolak
+ * saat itu juga, bukan menunggu batas waktu habis.
+ *
+ * `shouldAbort` diperiksa setiap putaran, supaya penghentian siaran selama
+ * menunggu tidak butuh jalur khusus.
+ *
+ * Kode penolakan: ENGINE_MISSING, ENGINE_FAILED, ENGINE_EXITED, HARBOR_TIMEOUT,
+ * ABORTED.
+ */
+function waitForHarbor(port, proc, {
+  timeoutMs = HARBOR_READY_TIMEOUT_MS,
+  intervalMs = HARBOR_POLL_MS,
+  shouldAbort = null,
+} = {}) {
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    let settled = false;
+    let timer = null;
+    let socket = null;
+
+    function finish(err, value) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (socket) socket.destroy();
+      proc.off('error', onError);
+      proc.off('close', onClose);
+      if (err) reject(err); else resolve(value);
+    }
+
+    function fail(code, message) {
+      const err = new Error(message);
+      err.code = code;
+      finish(err);
+    }
+
+    function onError(err) {
+      if (err.code === 'ENOENT') {
+        fail('ENGINE_MISSING', `liquidsoap tidak ditemukan (${liquidsoapPath()}). Pasang paket liquidsoap atau isi LIQUIDSOAP_PATH.`);
+      } else {
+        fail('ENGINE_FAILED', `liquidsoap tidak bisa dijalankan: ${err.message}`);
+      }
+    }
+
+    function onClose(code, signal) {
+      fail('ENGINE_EXITED', `liquidsoap keluar sebelum harbor siap (kode ${code}${signal ? `, sinyal ${signal}` : ''})`);
+    }
+
+    function attempt() {
+      if (settled) return;
+      if (shouldAbort && shouldAbort()) {
+        fail('ABORTED', 'Dibatalkan sebelum harbor siap');
+        return;
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        fail('HARBOR_TIMEOUT', `harbor liquidsoap tidak terbuka dalam ${Math.round(timeoutMs / 1000)} detik`);
+        return;
+      }
+
+      const probe = net.connect({ host: '127.0.0.1', port });
+      socket = probe;
+      probe.setTimeout(1000);
+      probe.once('connect', () => finish(null, { ms: Date.now() - startedAt }));
+      let retried = false;
+      const retry = () => {
+        if (retried) return;
+        retried = true;
+        probe.destroy();
+        if (socket === probe) socket = null;
+        if (!settled) timer = setTimeout(attempt, intervalMs);
+      };
+      probe.once('error', retry);
+      probe.once('timeout', retry);
+    }
+
+    proc.on('error', onError);
+    proc.on('close', onClose);
+    // Proses yang sudah selesai sebelum fungsi ini dipanggil tidak akan
+    // memancarkan event lagi.
+    if (proc.exitCode !== null || proc.signalCode !== null) {
+      onClose(proc.exitCode, proc.signalCode);
+      return;
+    }
+    attempt();
+  });
+}
+
 // --------------------------------------------------------------------- skrip
 
 // Belum ada kolomnya di database; dijadikan konstanta bernama supaya jelas
@@ -152,10 +254,20 @@ function buildScript(streamId, { playlistPath, port, mode = 'randomize' }) {
 settings.log.stdout.set(true)
 settings.log.level.set(3)
 
+# Image Docker menjalankan aplikasi sebagai root, dan liquidsoap menolak jalan
+# sebagai root ("init: security exit, root euid & guid") kecuali diizinkan.
+# Mengizinkannya tidak menambah hak apa pun: liquidsoap hanya menyamai proses
+# Node yang menjalankannya. Harbor tetap hanya loopback, dan tidak ada server
+# kendali jarak jauh yang dibuka.
+settings.init.allow_root.set(true)
+
 # Harbor HANYA boleh dijangkau dari mesin ini. Bawaan liquidsoap mengikat ke
 # 0.0.0.0, yang berarti audio siaran bisa didengarkan siapa pun yang sanggup
-# menjangkau port ini.
-settings.harbor.bind_addrs := ["127.0.0.1"]
+# menjangkau port ini. Ditulis dengan .set(), bukan :=, karena liquidsoap 2.1
+# (Debian bookworm, yaitu image Docker) menolak := pada setelan: "Error 5: this
+# value has type () -> _ but it should be a subtype of ref(_)". := baru menjadi
+# alias .set() sejak 2.2.
+settings.harbor.bind_addrs.set(["127.0.0.1"])
 
 # reload_mode="watch" memakai notifikasi filesystem, bukan pemeriksaan berkala:
 # nol kerja selama daftar tidak berubah, dan perubahan terbaca TANPA memutus
@@ -245,6 +357,7 @@ module.exports = {
   playlistPathFor, scriptPathFor, writePlaylist,
   buildScript, writeScript,
   allocatePort, harborUrl, HARBOR_BASE, HARBOR_RANGE, HARBOR_MOUNT,
+  waitForHarbor, HARBOR_READY_TIMEOUT_MS,
   spawnEngine, previewCommand,
   cleanupFiles, sweepFiles,
 };

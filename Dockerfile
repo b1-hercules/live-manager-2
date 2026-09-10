@@ -1,9 +1,10 @@
 FROM node:22-bookworm-slim
 
-# FFmpeg wajib ada; python3/make/g++ dibutuhkan sebagai cadangan kalau
+# FFmpeg wajib ada; liquidsoap hanya dipakai siaran ala radio (tanpanya siaran
+# video tetap jalan). python3/make/g++ dibutuhkan sebagai cadangan kalau
 # better-sqlite3 harus dikompilasi dari sumber.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ffmpeg python3 make g++ ca-certificates \
+      ffmpeg liquidsoap python3 make g++ ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

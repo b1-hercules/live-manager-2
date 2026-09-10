@@ -243,6 +243,11 @@ async function start(streamId, { manual = true } = {}) {
   let args;
   let liq = null;
   if (radio) {
+    // Jalan pintas saja: pemeriksaan yang menentukan ada di startRadioEngine().
+    // Di sini gunanya supaya klik Mulai kedua tidak menulis ulang berkas yang
+    // sedang dibaca liquidsoap pertama.
+    if (radioStarting.has(streamId)) return { ok: false, error: RADIO_STARTING_ERROR };
+
     // Penulisan berkas dipisah dari validasi karena pre-render latar memanggil
     // FFmpeg, dan itu async — sedangkan pratinjau perintah harus tetap sinkron
     // dan tidak boleh menulis apa pun.
@@ -275,7 +280,93 @@ async function start(streamId, { manual = true } = {}) {
     `Memulai siaran ke ${destinations.map((d) => d.name).join(', ')} (mode ${stream.encode_mode})`
   );
 
+  // Siaran radio: liquidsoap harus sudah melayani harbor SEBELUM FFmpeg
+  // dijalankan. Karena itu tombol Mulai siaran radio menunggu ±15 detik.
+  if (liq) {
+    const engine = await startRadioEngine(streamId, liq);
+    if (!engine.ok) return engine;
+    liq.proc = engine.proc;
+  }
+
   return launch(streamId, args, destinations, { manual, liq });
+}
+
+// Siaran radio yang sedang menunggu harbornya siap. Selama ±15 detik itu
+// siarannya belum masuk `running`, jadi penjaga Mulai-ganda tidak bisa
+// mengandalkan peta itu.
+const radioStarting = new Set();
+const RADIO_STARTING_ERROR = 'Siaran radio ini sedang dimulai — liquidsoap belum siap';
+
+/**
+ * Jalankan liquidsoap dan tunggu sampai harbornya benar-benar melayani.
+ *
+ * FFmpeg tidak boleh dijalankan lebih dulu: `-reconnect` hanya menyambung
+ * ulang koneksi yang pernah berhasil, bukan koneksi pertama, sedangkan
+ * liquidsoap sungguhan butuh ±15 detik untuk siap. Dulu keduanya dijalankan
+ * bersamaan; FFmpeg mati dalam 0,2 detik, restart otomatis memulai KEDUA proses
+ * dari nol, dan harbor tidak pernah sempat siap.
+ *
+ * Kegagalan di sini — binary tidak ada, liquidsoap keluar lebih dulu (skrip
+ * ditolak, menolak jalan sebagai root), atau batas waktu — bersifat final:
+ * mengulanginya tidak akan menolong, jadi siaran langsung ditandai error dengan
+ * kata-kata liquidsoap sendiri, bukan diputar ke auto-restart.
+ *
+ * Penghentian selama menunggu tidak butuh jalur khusus di stop(): stop() tanpa
+ * proses berjalan sudah mengembalikan status ke idle, dan itulah yang dilihat
+ * `shouldAbort`.
+ */
+async function startRadioEngine(streamId, liq) {
+  if (radioStarting.has(streamId)) return { ok: false, error: RADIO_STARTING_ERROR };
+  radioStarting.add(streamId);
+
+  // `state` untuk handleLiquidsoapOutput belum ada selama menunggu, jadi
+  // keluarannya ditampung di sini; baris terakhirnya menjelaskan kegagalan.
+  const recent = [];
+  const collect = (chunk) => {
+    for (const rawLine of chunk.toString().split(SPLIT_LINES)) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      recent.push(line);
+      if (recent.length > 20) recent.shift();
+    }
+  };
+
+  let proc = null;
+  try {
+    proc = liquidsoap.spawnEngine(liq.scriptPath);
+    // Pendengar tetap: event 'error' tanpa pendengar menjatuhkan seluruh
+    // aplikasi, dan waitForHarbor melepas pendengarnya sendiri saat selesai.
+    proc.on('error', () => { /* dilaporkan lewat waitForHarbor */ });
+    proc.stdout.on('data', collect);
+    proc.stderr.on('data', collect);
+
+    const ready = await liquidsoap.waitForHarbor(liq.port, proc, {
+      shouldAbort: () => streamModel.findById(streamId)?.status !== 'starting',
+    });
+    proc.stdout.off('data', collect);
+    proc.stderr.off('data', collect);
+    streamModel.addLog(streamId, 'info', `Liquidsoap siap dalam ${(ready.ms / 1000).toFixed(1)} detik`);
+    return { ok: true, proc };
+  } catch (err) {
+    if (proc) killProcess(proc);
+    if (err.code === 'ABORTED') {
+      // stop() sudah merapikan status dan berkasnya.
+      streamModel.addLog(streamId, 'info', 'Siaran dihentikan sebelum liquidsoap siap');
+      return { ok: false, error: 'Siaran dihentikan sebelum sempat mulai' };
+    }
+    const tail = recent.slice(-3).join(' | ');
+    const message = `Liquidsoap gagal disiapkan: ${err.message}${tail ? ` — ${tail}` : ''}`.slice(0, 500);
+    cleanupRadioFiles(streamId);
+    streamModel.setStatus(streamId, 'error', {
+      pid: null,
+      ended_at: new Date().toISOString(),
+      error_message: message,
+    });
+    streamModel.addLog(streamId, 'error', message);
+    return { ok: false, error: message };
+  } finally {
+    radioStarting.delete(streamId);
+  }
 }
 
 /**
@@ -283,22 +374,12 @@ async function start(streamId, { manual = true } = {}) {
  *
  * Mode radio memakai DUA proses yang diperlakukan sebagai satu siaran:
  * liquidsoap memegang daftar lagu dan menyiarkannya lewat harbor, FFmpeg
- * membacanya dan menyusun gambar. Liquidsoap dijalankan lebih dulu, tapi FFmpeg
- * tidak perlu menunggu harbor siap — `-reconnect` pada input audionya membuat
- * ia mencoba lagi sendiri.
+ * membacanya dan menyusun gambar. Liquidsoap sudah dijalankan dan harbornya
+ * sudah melayani (startRadioEngine) sebelum sampai di sini; launch() hanya
+ * mengambil alih pengawasannya.
  */
 function launch(streamId, args, destinations, { manual, liq = null }) {
-  let lsProc = null;
-  if (liq) {
-    try {
-      lsProc = liquidsoap.spawnEngine(liq.scriptPath);
-    } catch (err) {
-      const message = `Gagal menjalankan liquidsoap: ${err.message}`;
-      streamModel.setStatus(streamId, 'error', { error_message: message });
-      streamModel.addLog(streamId, 'error', message);
-      return { ok: false, error: message };
-    }
-  }
+  const lsProc = liq ? liq.proc : null;
 
   let proc;
   try {
@@ -541,9 +622,23 @@ function stop(streamId, reason = 'manual') {
     return { ok: false, error: 'Stream tidak sedang berjalan' };
   }
 
+  if (state.restartTimer) {
+    // Jeda auto-restart: FFmpeg lama sudah keluar, dan handleExit sudah menutup
+    // sesinya serta mematikan liquidsoap. killProcess() pada proses yang sudah
+    // mati tidak memicu 'close' lagi, jadi penutupan final dikerjakan di sini —
+    // tanpa ini statusnya tertahan di 'stopping' selamanya.
+    clearTimeout(state.restartTimer);
+    running.delete(streamId);
+    cleanupStreamFiles(streamId);
+    streamModel.setStatus(streamId, 'idle', { pid: null, ended_at: new Date().toISOString() });
+    streamModel.addLog(streamId, 'info', `Siaran dihentikan saat menunggu restart otomatis (${reason})`);
+    streamModel.trimLogs(streamId);
+    rotationEngine.onStreamStop(streamId);
+    return { ok: true };
+  }
+
   state.stopping = true;
   state.stopReason = reason;
-  if (state.restartTimer) clearTimeout(state.restartTimer);
   streamModel.setStatus(streamId, 'stopping');
   killProcess(state.proc);
   return { ok: true };

@@ -213,10 +213,74 @@ mengirim dua nilai dan yang menang ditentukan urutan DOM, bukan pilihan pengguna
 
 **Berikutnya: langkah 6 — Dockerfile + liquidsoap.**
 
+**Langkah 6 SELESAI (2026-09-10) — liquidsoap sungguhan, pertama kali.**
+
+Mesin kerja pindah ke Ubuntu 24.04, dan liquidsoap untuk pertama kalinya benar-benar
+dijalankan. Hasilnya dua cacat di jalur start radio yang mustahil terlihat di Windows
+(rinciannya di FINDINGS):
+- **Balapan harbor** — FFmpeg dijalankan seketika, harbor baru terbuka ±15 dtk
+  kemudian, dan `-reconnect` tidak menolong koneksi pertama. Siaran radio **tidak
+  pernah bisa live**; restart otomatis memulai kedua proses dari nol.
+- **Liquidsoap tidak ada / langsung keluar** → restart berulang ±12,6 menit dengan
+  pesan akhir yang menyalahkan FFmpeg, karena `spawn()` tidak melempar.
+
+Perbaikan — rancangan dipilih user: "tunggu harbor, baru jawab".
+- `services/liquidsoap.js` — `waitForHarbor(port, proc, { timeoutMs, shouldAbort })`,
+  batas 45 dtk. Murni sisipan: `git diff -U0` membuktikan nol baris lama dihapus.
+- `services/streamManager.js` — `startRadioEngine()` baru, dipanggil `start()` untuk
+  radio sebelum `launch()`; kegagalannya final (status error berisi baris terakhir
+  keluaran liquidsoap), bukan diputar ke auto-restart. `launch()` kini menerima
+  proses liquidsoap yang sudah siap (`liq.proc`); blok spawn lama — yang `catch`-nya
+  tak pernah jalan — dibuang. Mulai ganda ditolak lewat `radioStarting`.
+  **`stop()` TIDAK disentuh**: penghentian selama menunggu terbaca dari status yang
+  bukan lagi `starting` (`stop()` tanpa proses sudah mengembalikannya ke idle).
+- Impact: `launch` **HIGH** (12 simbol), `start` MEDIUM (12 simbol, 6 langsung).
+  Jalur video tidak berubah: `liq === null` → `lsProc` null seperti sebelumnya.
+  `detect_changes` akhir (setelah `.dockerignore` dan perbaikan `stop()`): **CRITICAL**,
+  8 berkas, 49 simbol, 16 proses — kini termasuk alur `CommandPreview`. CLI-nya memotong
+  daftar di 15 simbol meski diberi `--limit 300`, jadi diverifikasi dengan membandingkan
+  badan fungsi HEAD vs working tree (akhir baris dinormalkan): dari 42 fungsi di
+  `streamManager.js` dan `liquidsoap.js`, yang BERBEDA hanya `start`, `launch`, `stop`,
+  dan `buildScript` — tepat yang disengaja. `commandPreview`, `handleExit`,
+  `resolveSource`, `recoverOnBoot`, dan sisanya IDENTIK; tanda CRITICAL itu pergeseran
+  baris, didukung tes pratinjau yang tetap lulus.
+- Konsekuensi yang disepakati: tombol Mulai siaran radio menunggu ±15–20 dtk.
+
+Tes `tests/test-radio-live.js` (baru): liquidsoap asli + sink RTMP, lewat route.
+Dibuktikan **MERAH** pada kode lama — 4 pass, 15 fail (POST dijawab 447 ms, siaran tak
+pernah mengalir, restart berulang, harbor tak pernah mendengarkan) — lalu hijau
+**35/35**: POST dijawab setelah 17,7 dtk, siaran mengalir tanpa restart, harbor hanya
+127.0.0.1, Stop selama menunggu membatalkan dalam 209 ms tanpa FFmpeg dijalankan,
+Mulai kedua ditolak seketika dengan tetap SATU liquidsoap, dan liquidsoap yang langsung
+keluar berakhir error dalam 0,4 dtk berikut kata-katanya sendiri. Suite penuh:
+**439 pass, 3 fail** — ketiganya kegagalan lama FFmpeg 6.1 mode copy, sama persis
+dengan baseline sebelum perubahan (404 pass, 3 fail).
+
+Ikut diubah: `Dockerfile` (+liquidsoap), `.dockerignore` (baru — lihat FINDINGS),
+`.env.example` (`LIQUIDSOAP_PATH`), README (Kebutuhan sistem, Docker, Pemecahan
+masalah), `tests/README.md` (migrate, liquidsoap, port). Atas keputusan user juga
+diperbaiki: Stop selama jeda auto-restart (`stop()`, tes baru
+`tests/test-stop-restart-delay.js`). Suite akhir: **448 pass, 3 fail** — tiga
+kegagalan lama FFmpeg 6.1 mode copy yang diputuskan dicatat saja.
+
+**Uji image Docker** (liquidsoap 2.1.3, FFmpeg 5.1, berjalan sebagai root) menemukan dua
+penghalang lagi yang membuat mode radio **mati total di image** sejak langkah 1 — `:=`
+ditolak liquidsoap 2.1, lalu penolakan root (rinciannya di FINDINGS). Keduanya diperbaiki
+di `buildScript()` (impact LOW): `.set([...])` dan `settings.init.allow_root.set(true)`,
+dijaga dua asersi baru di `tests/test-radio.js`. Image dibangun ulang dengan kode final, lalu
+**`test-radio-live.js` dijalankan DI DALAM container sebagai root: 35/35** — POST dijawab
+setelah 7,5 dtk, siaran mengalir dengan track video + audio, harbor hanya 127.0.0.1, Stop
+selama menunggu membatalkan dalam 205 ms. (`procps` dipasang sementara di container uji
+itu saja karena tesnya memakai `pgrep`; aplikasinya sendiri tidak butuh.)
+
 #### Sisa yang belum diverifikasi
 
-Hanya satu, dan bukan penghalang: pertambahan ukuran image Docker setelah
-`apt-get install liquidsoap` (menarik runtime OCaml). Diukur saat image dibuat.
+~~Pertambahan ukuran image Docker setelah `apt-get install liquidsoap`~~ — **diukur
+2026-09-10**: dua build dari konteks yang sama, hanya lapisan apt yang berbeda.
+`docker images`: 1,91 GB dengan liquidsoap versus 1,81 GB tanpa → **±100 MB di
+disk**. `docker image inspect` melaporkan 432,1 MB versus 411,2 MB (+20,9 MB) —
+kemungkinan ukuran terkompresi, belum dipastikan. Angka mutlak 1,9 GB membengkak
+karena `COPY . .` tanpa `.dockerignore` (lihat FINDINGS), bukan karena liquidsoap.
 
 ## DONE
 
@@ -645,3 +709,15 @@ Hasil investigasi gap-analysis (GitNexus query/FTS lagi degraded di mesin ini �
 - **Batang `showfreqs` jauh lebih pendek dari kotaknya** (2026-09-10, diukur): dengan `ascale=cbrt` dan derau pink a=0.5, batangnya hanya mengisi pita 20px paling bawah dari kotak setinggi 120px. Akibatnya menguji "apakah spektrum tergambar" dengan merata-ratakan seluruh kotak MENYESATKAN — selisihnya cuma 0,9 luma dan terbaca seperti gagal, padahal pada pita yang benar selisihnya 40 luma (115,4 saat berbunyi versus 75,3 saat senyap). Ukur luma puncak antar pita, jangan rata-rata kotak. Untuk UI: kotak spektrum yang tinggi akan tampak banyak kosong pada musik yang tidak keras — itu perilaku `showfreqs`, bukan bug.
 - **`test-concat-cleanup` bisa gagal karena mesin berat, bukan karena kode** (2026-09-10): asersi "siaran playlist benar-benar mengalir" menunggu `stats.frame > 0` dari sink RTMP sungguhan dengan batas waktu. Saat mesin sibuk ia gagal, dan berkas itu memakan **47 detik**; saat normal lolos dalam **22 detik**. Cara memastikannya sebelum menyalahkan perubahan sendiri: jalankan berkas itu sendirian (`npm test -- concat`) dan bandingkan durasinya dengan run yang sehat. Durasi yang membengkak dua kali lipat adalah tandanya.
 - **Jangan salurkan `npm test` lewat `tail` saat dijalankan di latar belakang** (2026-09-10): keluaran yang tersimpan hanya ringkasannya, dan detail asersi yang gagal ikut hilang — persis yang dibutuhkan untuk mendiagnosis. Simpan keluaran utuh, potong saat membacanya.
+- **`liquidsoap.checkAvailability()` tidak pernah dipanggil; GitNexus bilang sebaliknya** (2026-09-10, diverifikasi dengan grep): `context` untuk simbol ini melaporkan pemanggil `app.js` `boot` dan `routes/settings.js`, padahal kedua berkas itu memanggil `ffmpegService.checkAvailability()` — fungsi bernama sama di `services/ffmpeg.js`. Index mengatribusikan panggilan ke KEDUA simbol yang namanya kembar. Akibat nyatanya: aplikasi tidak pernah memeriksa ketersediaan liquidsoap, dan halaman Pengaturan hanya menampilkan status FFmpeg. Pelajaran umum: untuk nama yang kembar lintas modul, jawaban `context`/`impact` wajib dicek silang dengan grep pada pola `<modul>.<nama>(`.
+- **Mesin kerja pindah ke Ubuntu 24.04 (2026-09-10)**: `better-sqlite3@11.10.0` tidak punya prebuilt untuk Node 24 (`No prebuilt binaries found (target=24.21.0)`) dan jatuh ke kompilasi yang butuh `make`. Dipakai Node 22 lewat `mise exec node@22 -- ...` — sama dengan base image `node:22-bookworm-slim`, jadi tes berjalan di runtime produksi. Versi liquidsoap berbeda di tiap tempat: Ubuntu 24.04 **2.2.4**, Debian bookworm (image Docker) **2.1.3**, trixie **2.3.2**; FFmpeg 6.1 di host versus 5.1 di image. Lulus di host tidak membuktikan image.
+- **`spawn()` TIDAK melempar untuk binary yang tidak ada** (2026-09-10, diuji di Node 22.23.2 dan 24.21.0, hasil identik): kembaliannya objek dengan `pid === undefined`, lalu event `error` (`ENOENT`), disusul `close` dengan kode **-2**. Akibatnya `try/catch` di sekitar `liquidsoap.spawnEngine()` dalam `launch()` tidak pernah menangkap "liquidsoap tidak terpasang": FFmpeg tetap dijalankan, status sempat `live`, lalu handler `close` liquidsoap mematikan FFmpeg dan siaran jatuh ke auto-restart berulang alih-alih gagal dengan pesan jelas. Dihitung dari konstanta `streamManager.js`: jeda 5+10+20+40+80+120×5 = **±12,6 menit** bolak-balik (uptime tiap putaran tak pernah melewati `STABLE_AFTER_MS` 60 dtk, jadi hitungan tidak di-reset), berakhir "Gagal setelah 10 percobaan restart"; tanpa auto-restart pesannya "FFmpeg berhenti (kode null)" — menyalahkan FFmpeg. Penyebab sebenarnya hanya ada di satu baris log "Proses liquidsoap error: spawn liquidsoap ENOENT". Ketiga calon titik perbaikan (`launch`, `resolveRadioSource`, `prepareRadioFiles`) HIGH lewat proses `start`/`startDueStreams`/`timer`. Pola `try { spawn } catch` yang sama juga ada di jalur FFmpeg (`ffmpeg.spawnStream`), perilaku lama yang belum disentuh.
+- **Liquidsoap sungguhan butuh ±15 detik sebelum harbor terbuka, dan `-reconnect` TIDAK menolong koneksi pertama** (2026-09-10, diukur di Ubuntu 24.04, liquidsoap 2.2.4, FFmpeg 6.1): "Standard library loaded in 13.93 seconds", harbor terbuka pada 14,8 dtk — sama pada putaran kedua (13,44 dtk; tidak ada cache). FFmpeg dengan flag persis `buildRadioArgs()` (`-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2`) terhadap port yang belum dibuka: **gagal dalam 213 ms**, "Connection refused". Menambah `-reconnect_on_network_error 1` dengan `delay_max 2`: menyerah dalam 1,5 dtk. Dengan `delay_max 16`: mencoba ulang pada +3/+7/+15 dtk dan berhasil, tetapi baru tersambung ±9 dtk setelah harbor siap, dan `delay_max` itu ikut mengubah perilaku sambung-ulang di tengah siaran. Akibatnya bagi `launch()` — yang menjalankan FFmpeg seketika setelah liquidsoap dengan anggapan "-reconnect membuat ia mencoba lagi sendiri" — FFmpeg mati sebelum harbor siap, `handleExit` membunuh liquidsoap, dan restart memulai keduanya dari nol; harbor tidak pernah sempat siap. **Disimpulkan dari dua pengukuran di atas plus pembacaan kode, belum diamati lewat aplikasi.** Tes lama tidak menangkapnya karena harbor tiruannya sudah mendengarkan sebelum FFmpeg jalan. Instalasi lama selamat karena liquidsoap hidup terus sebagai layanan terpisah dan hanya FFmpeg yang diulang.
+- **Uji asap liquidsoap 2.2.4 dengan skrip dari `buildScript()` asli: LULUS** (2026-09-10): harbor terikat `127.0.0.1` saja (dibaca dari `/proc/net/tcp`: `0100007F`), rekaman 10,0 dtk bersuara (mean −20,7 dB), dan `reload_mode="watch"` terbukti — 3 dtk setelah daftar ditulis ulang muncul "Reloading playlist", lalu lagu yang BARU ditambahkan benar-benar diputar. Liquidsoap 2.1.3 (image Docker) belum diuji.
+- **Tes integrasi mengandaikan database kerja yang SUDAH dimigrasi** (2026-09-10): di checkout baru `db/livemanager.db` belum ada (di-`.gitignore`), tes pertama membuatnya sebagai berkas kosong, dan 13 dari 17 berkas tes gagal dengan `no such table: users` (172 pass, 11 fail) — kegagalan lingkungan, bukan kode. Obatnya `npm run migrate` sekali sebelum `npm test`. Tanda pengenalnya: banyak berkas "0 pass, 1 fail" dalam 1–9 detik.
+- **FFmpeg 6.1 tidak mencetak `frame=`/`fps=` pada mode copy, jadi `STATS_RE` buta** (2026-09-10, diuji): baris progres perintah copy aplikasi di Ubuntu 24.04 berbentuk `size=     127kB time=00:00:07.65 bitrate= 135.6kbits/s speed=1.07x` — tanpa `frame=` dan `fps=`, pada `-loglevel warning` maupun `info` (dugaan awal soal loglevel keliru). `STATS_RE` di `streamManager.js` mewajibkan keduanya, sehingga `state.stats` tak pernah terisi: frame 0, bitrate `-`, bandwidth dashboard 0. Siarannya sendiri MENGALIR — koneksi TCP ke sink `ESTAB` sepanjang tes. Inilah ketiga kegagalan baseline di Linux (404 pass, 3 fail setelah migrasi): `test-single-video-regression`, `test-playlist-e2e`, `test-concat-cleanup`, semuanya asersi "benar-benar mengalir" yang membaca `stats.frame`. Mode radio me-re-encode video, jadi `frame=` tetap ada di sana. FFmpeg 5.1 (image Docker) belum diperiksa. Belum diperbaiki — menyentuh jalur keluaran setiap siaran.
+- **Stop selama jeda auto-restart membuat siaran tertahan di `stopping`** (2026-09-10, dibuktikan dengan siaran VIDEO biasa, tanpa mengubah kode): tujuan RTMP sengaja mati → FFmpeg gagal → `handleExit` masuk jeda 5 dtk (status `starting`, `restart_count` 1) → Stop ditekan di tengah jeda. Status 3 dtk dan 13 dtk kemudian tetap `stopping`, `ended_at` kosong, `runtime` masih tampil di `/api/overview`. Sebabnya: selama jeda, state masih ada di `running`; `stop()` membatalkan timer lalu memanggil `killProcess()` pada FFmpeg yang SUDAH keluar sendiri — tidak ada event `close` baru, jadi `handleExit` tidak pernah berjalan lagi dan semua pembersihannya (status idle, berkas sementara, sesi, `rotationEngine.onStreamStop`) terlewat. Menekan Mulai lagi memulihkannya, dan `recoverOnBoot` membereskannya saat aplikasi restart. Rotasi metadata TIDAK ikut berjalan untuk siaran yang tertahan: `rotationEngine.tick()` memakai `listRotating()` yang hanya memilih status `live`, jadi kuota YouTube tidak terbakar — padahal `ACTIVE_STATUSES` memuat `stopping`. Bug lama, bukan dari langkah 6; berlaku untuk semua mode. **Diperbaiki** atas keputusan user, hanya di `stop()` (impact MEDIUM, 13 simbol, 6 langsung; `handleExit` tidak disentuh): kalau state punya `restartTimer` — tanda `handleExit` sudah berjalan untuk proses yang mati dan sedang menunggu jeda — `stop()` langsung melakukan penutupan final yang sama dengan cabang `stopping` di `handleExit` (hapus dari `running`, bersihkan berkas, status idle + `ended_at`, log, `rotationEngine.onStreamStop`). Tes `tests/test-stop-restart-delay.js` (baru) dibuktikan MERAH dulu — 2 pass, 5 fail (tertahan `stopping`, `ended_at` kosong, `runtime` tetap tampil) — lalu hijau 7/7.
+- **Liquidsoap 2.1.3 (image Docker) MENOLAK `settings.harbor.bind_addrs := [...]` — mode radio mati total di image** (2026-09-10, diuji di container `livemanager:step6`): `At radio.liq, line 10, char 0-26: ... Error 5: this value has type () -> _ but it should be a subtype of ref(_)`, liquidsoap keluar dengan kode 1 sebelum sempat membuka harbor. Berlaku sejak langkah 1: tak terlihat di Windows (liquidsoap tak pernah jalan) maupun di Ubuntu 24.04 (2.2.4 menerima `:=` sebagai alias `.set()`). Diperbaiki jadi `.set([...])`, sama dengan dua baris setelan di atasnya yang lolos pemeriksaan tipe 2.1.3. Pelajaran: uji asap wajib dijalankan pada versi liquidsoap yang benar-benar dipakai produksi, bukan versi host.
+- **Liquidsoap menolak jalan sebagai root — dan container menjalankan aplikasi sebagai root** (2026-09-10, diuji di container setelah `:=` diperbaiki): `init: security exit, root euid & guid (user & group). Override with settings.init.allow_root.set(true)`, kode keluar 255. `Dockerfile` tidak punya `USER`, jadi setiap siaran radio di image Docker gagal di sini. Hal yang sama berlaku untuk instalasi PM2 yang dijalankan sebagai root di VPS. Dengan perbaikan langkah 6, kegagalan ini tampil sebagai error berisi kalimat liquidsoap tersebut, bukan restart berulang. **Diperbaiki** atas keputusan user dengan `settings.init.allow_root.set(true)` di skrip — liquidsoap hanya menyamai hak proses Node yang menjalankannya, harbor tetap loopback, tanpa telnet; `USER node` di Dockerfile ditolak karena mematahkan kepemilikan volume instalasi lama. Uji asap sesudahnya: **2.1.3 sebagai root** — harbor 127.0.0.1 terbuka setelah 7,2 dtk, rekaman 10 dtk bersuara (−20,3 dB), reload watch memutar lagu baru; **2.2.4 non-root** — setelan itu tidak mengganggu (harbor 15,6 dtk, rekaman utuh, reload bekerja).
+- **FFmpeg 5.1 (image Docker) MASIH mencetak `frame=` pada mode copy** (2026-09-10, argumen persis aplikasi): `frame=  190 fps= 25 q=-1.0 Lsize=     125kB time=00:00:07.50 bitrate= 136.4kbits/s speed=   1x`. Jadi masalah `STATS_RE` hanya mengenai instalasi bare-metal dengan FFmpeg ≥6.1, bukan image Docker.
+- **`COPY . .` menimpa `node_modules` hasil `npm install` di image** (2026-09-10, diuji): `nodemon` — devDependency — ada di image padahal `npm install --omit=dev`. (Hash `better_sqlite3.node` yang sama dengan host ternyata BUKAN bukti, meski sempat dipakai begitu: setelah `.dockerignore` dipasang pun hash di image tetap `d7d9272b12d11c1d`, karena host dan image sama-sama mengunduh prebuilt Node 22 linux-x64 yang identik.) Repo tidak punya `.dockerignore`, sehingga ikut tersalin: `node_modules` host (147 MB), `.gitnexus` (57 MB), `.git`, `.claude/`, dan `db/livemanager.db` (database kerja, berisi token terenkripsi) — begitu pula `.env` kalau ada di mesin build. Konsekuensi yang disimpulkan (belum diuji): image yang dibangun dari host Windows akan membawa binary `better-sqlite3` win32 ke container Linux. Masalah lama; Dockerfile di HEAD punya `COPY . .` yang sama. **Diperbaiki dengan `.dockerignore`** atas keputusan user: konteks build turun dari ±200 MB jadi 1,0 MB, image 1,67 GB (dari 1,91 GB); `.git`, `.gitnexus`, `.claude`, dan database kerja tidak lagi ada di image, `nodemon` hilang (node_modules kini hasil `npm install --omit=dev` image sendiri), better-sqlite3 tetap termuat, dan uji asap radio di container tetap lulus.

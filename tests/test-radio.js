@@ -36,7 +36,14 @@ const fwd = (f) => f.split(path.sep).join('/');
 const script = ls.buildScript(7, { playlistPath: p('list.m3u'), port: 8305 });
 
 check('harbor mengikat loopback saja',
-  script.includes('settings.harbor.bind_addrs := ["127.0.0.1"]'), true);
+  script.includes('settings.harbor.bind_addrs.set(["127.0.0.1"])'), true);
+// Liquidsoap 2.1 (image Docker, Debian bookworm) menolak := pada setelan dan
+// keluar sebelum membuka harbor; := baru jadi alias .set() sejak 2.2.
+check('tanpa := pada setelan (ditolak liquidsoap 2.1)', /^settings\.[^\n]*:=/m.test(script), false);
+// Tanpa ini liquidsoap keluar dengan "init: security exit" di image Docker,
+// yang menjalankan aplikasi sebagai root.
+check('liquidsoap diizinkan jalan sebagai root (image Docker)',
+  script.includes('settings.init.allow_root.set(true)'), true);
 check('memakai reload_mode watch', script.includes('reload_mode="watch"'), true);
 check('port tersemat', script.includes('port=8305'), true);
 check('mksafe dipasang', /mksafe/.test(script), true);
