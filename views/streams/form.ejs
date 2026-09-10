@@ -22,7 +22,12 @@
             <div class="hint">Nama internal untuk kamu sendiri. Judul yang tampil di YouTube diatur lewat profil rotasi.</div>
           </div>
 
-          <% const usingPlaylist = Boolean(val('playlist_id', '')); %>
+          <%
+            const chosenPlaylist = String(val('playlist_id', ''));
+            const isRadio = Boolean(chosenPlaylist)
+              && audioPlaylists.some(function (p) { return String(p.id) === chosenPlaylist; });
+            const usingPlaylist = Boolean(chosenPlaylist) && !isRadio;
+          %>
           <div class="field">
             <label>Sumber Siaran</label>
             <% if (!videos.length) { %>
@@ -32,11 +37,12 @@
               </div>
             <% } else { %>
               <div class="tabs" style="margin-bottom:10px">
-                <button class="tab <%= usingPlaylist ? '' : 'active' %>" type="button" data-tab="srcVideo">Satu Video</button>
+                <button class="tab <%= (usingPlaylist || isRadio) ? '' : 'active' %>" type="button" data-tab="srcVideo">Satu Video</button>
                 <button class="tab <%= usingPlaylist ? 'active' : '' %>" type="button" data-tab="srcPlaylist">Playlist</button>
+                <button class="tab <%= isRadio ? 'active' : '' %>" type="button" data-tab="srcRadio">Radio (Musik)</button>
               </div>
 
-              <div id="srcVideo" <%= usingPlaylist ? 'hidden' : '' %>>
+              <div id="srcVideo" <%= (usingPlaylist || isRadio) ? 'hidden' : '' %>>
                 <select id="video_id" name="video_id">
                   <option value="">— pilih video —</option>
                   <% videos.forEach(function (v) { %>
@@ -69,6 +75,116 @@
                   <div class="hint">
                     Video diputar berurutan, lalu daftarnya diulang dari awal bila loop aktif.
                     Pastikan resolusi dan codec antar video seragam, atau pakai mode Re-encode.
+                  </div>
+                <% } %>
+              </div>
+
+              <div id="srcRadio" <%= isRadio ? '' : 'hidden' %>>
+                <% if (!audioPlaylists.length) { %>
+                  <div class="alert alert-info" style="margin:0">
+                    <span class="alert-icon"><%- include('../partials/icon', { name: 'info' }) %></span>
+                    <div>
+                      Belum ada playlist musik. <a href="/playlists">Buat playlist berjenis Musik →</a>,
+                      lalu isi dengan berkas dari <a href="/videos?kind=audio">galeri musik</a>.
+                    </div>
+                  </div>
+                <% } else { %>
+                  <select id="radio_playlist_id" name="playlist_id">
+                    <option value="">— pilih playlist musik —</option>
+                    <% audioPlaylists.forEach(function (p) { %>
+                      <option value="<%= p.id %>" <%= chosenPlaylist === String(p.id) ? 'selected' : '' %>>
+                        <%= p.name %> · <%= p.item_count %> lagu<%= p.shuffle ? ' · acak' : '' %>
+                      </option>
+                    <% }); %>
+                  </select>
+                  <div class="hint">
+                    Musik diputar liquidsoap dengan volume antar lagu disamakan dan sambungan
+                    yang halus. Daftar lagunya boleh diubah <strong>saat siaran berjalan</strong> —
+                    perubahannya terbaca tanpa memutus siaran.
+                  </div>
+
+                  <div class="alert alert-warn mt-2" style="margin-bottom:0">
+                    <span class="alert-icon"><%- include('../partials/icon', { name: 'alert' }) %></span>
+                    <div class="text-sm">
+                      Siaran radio wajib punya minimal satu <strong>gambar latar</strong>.
+                      Gambarnya diunggah di halaman detail stream setelah stream ini dibuat.
+                    </div>
+                  </div>
+
+                  <hr class="mt-2">
+                  <div class="text-sm" style="font-weight:600;margin-bottom:8px">Spektrum Audio</div>
+
+                  <div class="form-grid">
+                    <div class="field">
+                      <label for="spectrum_mode">Bentuk</label>
+                      <select id="spectrum_mode" name="spectrum_mode">
+                        <% const modeLabels = {
+                             bar: 'Batang (bar)',
+                             line: 'Garis',
+                             dot: 'Titik',
+                             wave: 'Gelombang (waveform)',
+                           }; %>
+                        <% Object.entries(modeLabels).forEach(function ([key, label]) { %>
+                          <option value="<%= key %>" <%= val('spectrum_mode', 'bar') === key ? 'selected' : '' %>>
+                            <%= label %>
+                          </option>
+                        <% }); %>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="spectrum_color">Warna</label>
+                      <input id="spectrum_color" name="spectrum_color" type="color"
+                             value="<%= val('spectrum_color', '#00FF88') %>">
+                    </div>
+                  </div>
+
+                  <div class="form-grid">
+                    <div class="field">
+                      <label for="spectrum_width">Lebar (px)</label>
+                      <input id="spectrum_width" name="spectrum_width" type="number" min="16" step="2"
+                             value="<%= val('spectrum_width', 480) %>">
+                    </div>
+                    <div class="field">
+                      <label for="spectrum_height">Tinggi (px)</label>
+                      <input id="spectrum_height" name="spectrum_height" type="number" min="16"
+                             value="<%= val('spectrum_height', 130) %>">
+                    </div>
+                  </div>
+
+                  <div class="form-grid">
+                    <div class="field">
+                      <label for="spectrum_x">Jarak dari kiri (px)</label>
+                      <input id="spectrum_x" name="spectrum_x" type="number" min="0"
+                             value="<%= val('spectrum_x', '') === null ? '' : val('spectrum_x', '') %>"
+                             placeholder="kosongkan = di tengah">
+                      <div class="hint">Kosongkan untuk memusatkannya secara mendatar.</div>
+                    </div>
+                    <div class="field">
+                      <label for="spectrum_y">Jarak dari atas (px)</label>
+                      <input id="spectrum_y" name="spectrum_y" type="number" min="0"
+                             value="<%= val('spectrum_y', 15) %>">
+                    </div>
+                  </div>
+
+                  <div class="form-grid">
+                    <div class="field">
+                      <label for="background_rotate_minutes">Ganti gambar latar tiap (menit)</label>
+                      <input id="background_rotate_minutes" name="background_rotate_minutes"
+                             type="number" min="1" max="1440"
+                             value="<%= val('background_rotate_minutes', 120) %>">
+                      <div class="hint">Pergantiannya tidak memutus siaran.</div>
+                    </div>
+                    <div class="field">
+                      <label class="check">
+                        <input type="checkbox" name="spectrum_mirror" value="1"
+                               <%= val('spectrum_mirror', 0) ? 'checked' : '' %>>
+                        Cermin
+                      </label>
+                      <div class="hint">
+                        Separuh spektrum dipantulkan ke sisi lain, bergerak simetris.
+                        Tidak berlaku untuk bentuk gelombang.
+                      </div>
+                    </div>
                   </div>
                 <% } %>
               </div>
@@ -345,18 +461,26 @@
 </form>
 
 <script>
-  // Kedua pilihan sumber tetap ada di DOM saat tabnya disembunyikan, jadi
-  // keduanya ikut terkirim. Yang tersembunyi dikosongkan sebelum submit supaya
+  // Ketiga pilihan sumber tetap ada di DOM saat tabnya disembunyikan, jadi
+  // semuanya ikut terkirim. Yang tersembunyi dikosongkan sebelum submit supaya
   // sisa pilihan lama tidak diam-diam menang di server.
+  //
+  // Panel Playlist dan Radio sama-sama mengirim playlist_id, jadi ini bukan
+  // sekadar kerapian: tanpa pengosongan, memilih playlist musik lalu berpindah
+  // ke tab Playlist akan mengirim dua nilai dan yang menang ditentukan urutan
+  // DOM, bukan pilihan pengguna.
   (function () {
     const form = document.querySelector('form');
-    const video = document.getElementById('srcVideo');
-    const playlist = document.getElementById('srcPlaylist');
-    if (!form || !video || !playlist) return;
+    const panels = ['srcVideo', 'srcPlaylist', 'srcRadio']
+      .map(function (id) { return document.getElementById(id); })
+      .filter(Boolean);
+    if (!form || panels.length < 2) return;
 
     form.addEventListener('submit', function () {
-      const hidden = video.hidden ? video : playlist;
-      hidden.querySelectorAll('select').forEach(function (select) { select.value = ''; });
+      panels.forEach(function (panel) {
+        if (!panel.hidden) return;
+        panel.querySelectorAll('select').forEach(function (select) { select.value = ''; });
+      });
     });
   })();
 </script>

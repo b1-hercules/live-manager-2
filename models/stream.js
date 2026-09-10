@@ -106,6 +106,56 @@ function listRotating() {
     .map(hydrate);
 }
 
+const SPECTRUM_MODES = new Set(['bar', 'line', 'dot', 'wave']);
+
+/**
+ * Setelan khusus siaran radio, disimpan lewat pintu sendiri.
+ *
+ * SENGAJA tidak menumpang normalize()/create()/update(): ketiganya dilalui
+ * setiap siaran, video maupun radio, dan menambah kolom di sana berarti
+ * menyentuh jalur yang dipakai semua orang demi setelan yang hanya berlaku
+ * untuk satu mode.
+ *
+ * Semua nilai dijepit di sini, bukan di filtergraph, supaya angka yang mustahil
+ * tidak pernah sampai ke database. Warna hanya diterima dalam bentuk #RRGGBB —
+ * nilai ini masuk ke perintah FFmpeg, tempat koma dan titik dua memisahkan
+ * filter.
+ */
+function updateRadioSettings(id, userId, data) {
+  const existing = findById(id, userId);
+  if (!existing) return null;
+
+  const mode = SPECTRUM_MODES.has(data.spectrum_mode) ? data.spectrum_mode : 'bar';
+  const color = /^#[0-9A-Fa-f]{6}$/.test(String(data.spectrum_color || ''))
+    ? String(data.spectrum_color)
+    : '#00FF88';
+
+  // Kosong berarti "di tengah secara mendatar", dan itu nilai yang sah —
+  // dibedakan dari 0, yang berarti menempel di tepi kiri.
+  const rawX = String(data.spectrum_x ?? '').trim();
+  const x = rawX === '' ? null : clamp(toInt(rawX), 0, 7680);
+
+  db.prepare(
+    `UPDATE streams SET spectrum_mode = ?, spectrum_x = ?, spectrum_y = ?,
+       spectrum_width = ?, spectrum_height = ?, spectrum_color = ?,
+       spectrum_mirror = ?, background_rotate_minutes = ?, updated_at = ?
+     WHERE id = ? AND user_id = ?`
+  ).run(
+    mode,
+    x,
+    clamp(toInt(data.spectrum_y), 0, 4320),
+    clamp(toInt(data.spectrum_width), 16, 7680),
+    clamp(toInt(data.spectrum_height), 16, 4320),
+    color,
+    toBool(data.spectrum_mirror) ? 1 : 0,
+    clamp(toInt(data.background_rotate_minutes), 1, 1440),
+    now(),
+    id,
+    userId
+  );
+  return findById(id);
+}
+
 function normalize(data) {
   // Sumber siaran hanya boleh satu: video tunggal atau playlist. Form mengirim
   // keduanya (yang tidak dipilih bernilai kosong), jadi penentuannya di sini —
@@ -298,6 +348,7 @@ function stats(userId) {
 }
 
 module.exports = {
+  updateRadioSettings, SPECTRUM_MODES,
   ACTIVE_STATUSES, RESOLUTIONS,
   listByUser, findById, listActive, listScheduled, listWithEndTime, listRotating,
   create, update, setDestinations, destinationIds, setStatus, incrementRestart,

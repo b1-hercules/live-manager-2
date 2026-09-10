@@ -9,7 +9,7 @@ const chunkUpload = require('../services/chunkUpload');
 const videoIngest = require('../services/videoIngest');
 const videoImport = require('../services/videoImport');
 const drive = require('../services/drive');
-const { uploadVideo, verifyVideoContent, handleUploadError } = require('../middleware/upload');
+const { uploadVideo, verifyMediaContent, handleUploadError } = require('../middleware/upload');
 const csrf = require('../middleware/csrf');
 const { requireAuth } = require('../middleware/auth');
 const { formatBytes, formatDuration } = require('../utils/helpers');
@@ -19,11 +19,18 @@ router.use(requireAuth);
 
 router.get('/', (req, res) => {
   const search = (req.query.q || '').trim();
-  const videos = videoModel.listByUser(req.user.id, { search });
+  // Video dan musik tinggal di tabel yang sama, dibedakan kolom kind. Tanpa
+  // saringan ini berkas musik bocor ke galeri video.
+  const kind = req.query.kind === 'audio' ? 'audio' : 'video';
+  const videos = videoModel.listByUser(req.user.id, { search, kind });
   res.render('videos/index', {
-    title: 'Galeri Video',
+    title: kind === 'audio' ? 'Galeri Musik' : 'Galeri Video',
     videos,
     search,
+    kind,
+    videoCount: videoModel.countByUser(req.user.id, { kind: 'video' }),
+    audioCount: videoModel.countByUser(req.user.id, { kind: 'audio' }),
+    // Ukuran disk mencakup keduanya: musik memakan ruang sama nyatanya.
     totalSize: videoModel.totalSize(req.user.id),
     maxUploadMb: Math.round(config.maxUploadBytes / 1024 / 1024),
     formatBytes,
@@ -32,10 +39,11 @@ router.get('/', (req, res) => {
 });
 
 // csrf.verify wajib ada setelah multer: body multipart baru terurai di sini.
-router.post('/upload', uploadVideo.single('video'), handleUploadError, csrf.verify, verifyVideoContent, async (req, res, next) => {
+router.post('/upload', uploadVideo.single('video'), handleUploadError, csrf.verify, verifyMediaContent, async (req, res, next) => {
+  const kind = req.body.kind === 'audio' ? 'audio' : 'video';
   if (!req.file) {
     req.session.flash = { type: 'error', message: 'Tidak ada file yang diunggah.' };
-    return res.redirect('/videos');
+    return res.redirect(kind === 'audio' ? '/videos?kind=audio' : '/videos');
   }
 
   const absPath = req.file.path;
@@ -46,6 +54,7 @@ router.post('/upload', uploadVideo.single('video'), handleUploadError, csrf.veri
       originalName: req.file.originalname,
       title: req.body.title,
       size: req.file.size,
+      kind,
       log: req.app.locals.log,
     });
 
@@ -53,7 +62,7 @@ router.post('/upload', uploadVideo.single('video'), handleUploadError, csrf.veri
       type: 'success',
       message: `"${video.title}" berhasil diunggah (${formatBytes(video.filesize)}, ${formatDuration(video.duration)}).`,
     };
-    res.redirect('/videos');
+    res.redirect(video.kind === 'audio' ? '/videos?kind=audio' : '/videos');
   } catch (err) {
     // File yang tidak bisa dibaca FFmpeg tidak berguna — hapus dari disk.
     try { fs.unlinkSync(absPath); } catch (_) { /* sudah tidak ada */ }
@@ -121,6 +130,7 @@ router.post('/upload/:id/finish', async (req, res, next) => {
       originalName: file.filename,
       title: req.body.title,
       size: file.size,
+      kind: req.body.kind === 'audio' ? 'audio' : 'video',
       log: req.app.locals.log,
     });
 

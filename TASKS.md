@@ -171,6 +171,48 @@ Berikutnya lagi: UI, lalu Dockerfile.
 
 **Berikutnya: UI (form siaran, unggah latar, setelan spektrum), lalu Dockerfile.**
 
+**Langkah 5 SELESAI (2026-09-10) — UI.**
+
+Perjalanan penggunanya kini utuh: unggah musik di tab Musik galeri
+(`/videos?kind=audio`) → buat playlist berjenis Musik → isi (pemilihnya
+otomatis hanya menawarkan musik) → buat siaran lewat tab ketiga "Radio (Musik)"
+di form → unggah gambar latar di halaman detail siaran.
+
+- `models/playlist.js` — `create()` menyimpan `kind`; `listByUser()` bisa
+  disaring. `update()` SENGAJA tidak menyentuh `kind`: playlist video yang
+  berubah jadi musik membawa serta isinya yang salah jenis, dan itu baru
+  ketahuan saat siaran dijalankan.
+- `models/stream.js` — **`updateRadioSettings()` sebagai pintu terpisah**, bukan
+  delapan kolom baru dititipkan ke `normalize()`/`create()`/`update()` yang
+  dilalui SETIAP siaran. Pola yang sama seperti `buildArgs` dan `resolveSource`,
+  dan di sini bahkan tidak perlu impact analysis untuk memutuskannya. Semua
+  nilai dijepit di model, bukan di filtergraph: warna hanya `#RRGGBB`, sebab
+  nilai ini berujung di perintah FFmpeg tempat koma dan titik dua memisahkan
+  filter.
+- `middleware/upload.js` — `verifyMediaContent` memilih keluarga signature dari
+  field `kind` di form. Mempercayai body di sini aman: yang ditentukannya hanya
+  signature MANA yang harus cocok, dan isi berkas tetap yang memutuskan.
+- `routes/videos.js` — galeri bertab (video / musik), unggah biasa dan
+  berpotongan sama-sama meneruskan `kind`. Impor Drive tetap khusus video.
+- `routes/playlists.js` — pemilih isi mengikuti jenis playlist, dan jenis yang
+  tidak cocok ditolak di server (form yang dipalsukan tidak lolos).
+- `routes/streams.js` — playlist dipisah per jenis di `formContext`; route
+  gambar latar (`POST /:id/backgrounds`, `/reorder`, `/:bgId/delete`);
+  `radioWarnings()` menampilkan dua hal yang membuat siaran GAGAL DIMULAI di
+  halaman detail, bukan menunggu tombol Mulai ditekan.
+- View: tab galeri, pemilih jenis playlist, tab ketiga di form siaran beserta
+  setelan spektrum, dan panel gambar latar di detail siaran.
+
+Catatan: gambar latar diunggah SETELAH siaran dibuat (unggah butuh multipart
+dan id siaran), jadi siaran radio bisa berada dalam keadaan belum bisa dimulai.
+Itu disengaja dan ditandai jelas di halaman detail.
+
+Pembersihan panel sumber di form sekarang mencakup KETIGA panel. Panel Playlist
+dan Radio sama-sama mengirim `playlist_id`; tanpa pengosongan, berpindah tab
+mengirim dua nilai dan yang menang ditentukan urutan DOM, bukan pilihan pengguna.
+
+**Berikutnya: langkah 6 — Dockerfile + liquidsoap.**
+
 #### Sisa yang belum diverifikasi
 
 Hanya satu, dan bukan penghalang: pertambahan ukuran image Docker setelah
@@ -601,3 +643,5 @@ Hasil investigasi gap-analysis (GitNexus query/FTS lagi degraded di mesin ini �
 - **`-re` MEMATIKAN siaran radio; audio harbor yang memacunya** (2026-09-10, diukur): input latar mode radio adalah daftar ffconcat berisi satu entri per gambar dengan `duration = rotateMinutes * 60` — bawaannya 7200 detik. `-re` memacu input menurut timestamp-nya sendiri, jadi ia menunggu 7200 detik sebelum frame berikutnya. Diukur pada gambar BMP yang sama, meminta 8 detik keluaran dengan audio harbor tiruan berlaju realtime: **concat + `-re` tidak selesai dalam 33 detik**, sedangkan **concat tanpa `-re` selesai 9,3 detik pada `speed=1.04x`**; `-loop 1` dengan maupun tanpa `-re` sama-sama 9,3 detik. Kesimpulannya yang memacu rangkaian ini adalah audio harbor yang memang mengalir realtime, bukan `-re` — dan `-re` justru berbahaya di sini. Instalasi lama memakai `-re` dengan aman karena latarnya `-loop 1 -framerate N` (yang memancarkan frame pada fps sungguhan), bukan concat berdurasi panjang; jangan menyalin `-re`-nya begitu saja. Dijaga `tests/test-radio.js` lewat pemeriksaan "TIDAK ada -re pada input latar" dan ambang realtime.
 - **Slideshow ffconcat berganti TANPA jeda siaran** (2026-09-10, diuji): berbeda dari instalasi lama yang menjalankan ulang FFmpeg setiap pergantian gambar (jeda ~5 detik tiap rotasi). Daftar 3 gambar berdurasi 2 detik yang diminta 9 detik berganti tepat waktu pada 4 dari 4 sampel termasuk setelah daftarnya berputar. Syaratnya cuma satu: jangan pasang `-re` (lihat temuan di atas).
 - **Batang `showfreqs` jauh lebih pendek dari kotaknya** (2026-09-10, diukur): dengan `ascale=cbrt` dan derau pink a=0.5, batangnya hanya mengisi pita 20px paling bawah dari kotak setinggi 120px. Akibatnya menguji "apakah spektrum tergambar" dengan merata-ratakan seluruh kotak MENYESATKAN — selisihnya cuma 0,9 luma dan terbaca seperti gagal, padahal pada pita yang benar selisihnya 40 luma (115,4 saat berbunyi versus 75,3 saat senyap). Ukur luma puncak antar pita, jangan rata-rata kotak. Untuk UI: kotak spektrum yang tinggi akan tampak banyak kosong pada musik yang tidak keras — itu perilaku `showfreqs`, bukan bug.
+- **`test-concat-cleanup` bisa gagal karena mesin berat, bukan karena kode** (2026-09-10): asersi "siaran playlist benar-benar mengalir" menunggu `stats.frame > 0` dari sink RTMP sungguhan dengan batas waktu. Saat mesin sibuk ia gagal, dan berkas itu memakan **47 detik**; saat normal lolos dalam **22 detik**. Cara memastikannya sebelum menyalahkan perubahan sendiri: jalankan berkas itu sendirian (`npm test -- concat`) dan bandingkan durasinya dengan run yang sehat. Durasi yang membengkak dua kali lipat adalah tandanya.
+- **Jangan salurkan `npm test` lewat `tail` saat dijalankan di latar belakang** (2026-09-10): keluaran yang tersimpan hanya ringkasannya, dan detail asersi yang gagal ikut hilang — persis yang dibutuhkan untuk mendiagnosis. Simpan keluaran utuh, potong saat membacanya.

@@ -1,17 +1,33 @@
 <% layout('layouts/main') %>
 
+<% const isAudio = kind === 'audio'; %>
+
+<div class="tabs mb-2" style="display:flex;gap:6px">
+  <a class="btn btn-sm <%= isAudio ? '' : 'btn-primary' %>" href="/videos">
+    Video <span class="text-xs text-mute">(<%= videoCount %>)</span>
+  </a>
+  <a class="btn btn-sm <%= isAudio ? 'btn-primary' : '' %>" href="/videos?kind=audio">
+    Musik <span class="text-xs text-mute">(<%= audioCount %>)</span>
+  </a>
+</div>
+
 <div class="card mb-2">
   <div class="card-head">
-    <h2>Unggah Video</h2>
-    <span class="sub">maks <%= maxUploadMb %> MB · mp4, mkv, mov, flv, webm, ts</span>
+    <h2><%= isAudio ? 'Unggah Musik' : 'Unggah Video' %></h2>
+    <span class="sub">
+      maks <%= maxUploadMb %> MB ·
+      <%= isAudio ? 'mp3, flac, m4a, ogg, wav' : 'mp4, mkv, mov, flv, webm, ts' %>
+    </span>
   </div>
   <div class="card-body">
     <form method="post" action="/videos/upload" enctype="multipart/form-data" id="uploadForm">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="kind" value="<%= kind %>">
       <div class="form-grid">
         <div class="field">
-          <label for="video">File Video</label>
-          <input id="video" name="video" type="file" accept="video/*,.mkv,.ts,.flv" required>
+          <label for="video"><%= isAudio ? 'File Musik' : 'File Video' %></label>
+          <input id="video" name="video" type="file"
+                 accept="<%= isAudio ? 'audio/*,.mp3,.flac,.m4a,.ogg,.wav' : 'video/*,.mkv,.ts,.flv' %>" required>
         </div>
         <div class="field">
           <label for="title">Judul <span class="text-mute">(opsional)</span></label>
@@ -23,11 +39,17 @@
           <%- include('../partials/icon', { name: 'upload' }) %> Unggah
         </button>
         <button class="btn btn-ghost btn-sm" type="button" id="uploadCancel" hidden>Batal</button>
-        <button class="btn btn-sm" type="button" id="driveBtn">
-          <%- include('../partials/icon', { name: 'link' }) %> Impor dari Drive
-        </button>
+        <% if (!isAudio) { %>
+          <button class="btn btn-sm" type="button" id="driveBtn">
+            <%- include('../partials/icon', { name: 'link' }) %> Impor dari Drive
+          </button>
+        <% } %>
         <span class="text-xs text-mute" id="uploadNote">
-          Video akan diprobe dengan ffprobe dan dibuatkan thumbnail otomatis.
+          <% if (isAudio) { %>
+            Musik dipakai sebagai sumber siaran ala radio. Tidak dibuatkan thumbnail.
+          <% } else { %>
+            Video akan diprobe dengan ffprobe dan dibuatkan thumbnail otomatis.
+          <% } %>
         </span>
       </div>
       <div id="uploadProgress" class="mt-1" hidden>
@@ -40,8 +62,9 @@
 
 <div class="card">
   <div class="card-head">
-    <h2>Galeri <span class="sub">· <%= videos.length %> video · <%= formatBytes(totalSize) %></span></h2>
+    <h2>Galeri <span class="sub">· <%= videos.length %> <%= isAudio ? 'lagu' : 'video' %> · <%= formatBytes(totalSize) %> total</span></h2>
     <form method="get" action="/videos" class="flex gap-1">
+      <input type="hidden" name="kind" value="<%= kind %>">
       <input type="search" name="q" value="<%= search %>" placeholder="Cari judul..." style="width:200px">
       <button class="btn btn-sm" type="submit">Cari</button>
       <% if (search) { %><a href="/videos" class="btn btn-ghost btn-sm">Reset</a><% } %>

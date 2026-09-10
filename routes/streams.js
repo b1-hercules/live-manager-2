@@ -7,10 +7,13 @@ const playlistModel = require('../models/playlist');
 const destinationModel = require('../models/destination');
 const rotationModel = require('../models/rotation');
 const accountModel = require('../models/account');
+const backgroundModel = require('../models/streamBackground');
 const streamManager = require('../services/streamManager');
 const rotationEngine = require('../services/rotationEngine');
 const ffmpeg = require('../services/ffmpeg');
 const youtube = require('../services/youtube');
+const { uploadThumbnails, verifyImageContent, handleUploadError, relativePath } = require('../middleware/upload');
+const csrf = require('../middleware/csrf');
 const { requireAuth } = require('../middleware/auth');
 const { localInputToIso, isoToLocalInput, formatDuration, humanUptime, maskKey } = require('../utils/helpers');
 
@@ -31,7 +34,10 @@ function ownedStream(req) {
 function formContext(req) {
   return {
     videos: videoModel.listByUser(req.user.id),
-    playlists: playlistModel.listByUser(req.user.id),
+    // Dipisah per jenis: playlist musik tidak boleh muncul sebagai sumber
+    // siaran video, dan sebaliknya.
+    playlists: playlistModel.listByUser(req.user.id, { kind: 'video' }),
+    audioPlaylists: playlistModel.listByUser(req.user.id, { kind: 'audio' }),
     destinations: destinationModel.listByUser(req.user.id),
     profiles: rotationModel.listProfiles(req.user.id),
     accounts: accountModel.listByUser(req.user.id, 'youtube'),
@@ -91,6 +97,9 @@ router.post('/', (req, res) => {
   }
 
   const stream = streamModel.create(req.user.id, withSchedule(req.body), destinationIds);
+  // Setelan spektrum lewat pintunya sendiri; lihat catatan di
+  // models/stream.js updateRadioSettings().
+  streamModel.updateRadioSettings(stream.id, req.user.id, req.body);
   req.session.flash = {
     type: 'success',
     message: stream.status === 'scheduled'
@@ -100,6 +109,22 @@ router.post('/', (req, res) => {
   res.redirect(`/streams/${stream.id}`);
 });
 
+/**
+ * Peringatan khusus siaran radio. Mengembalikan null kalau bukan radio, supaya
+ * pemanggil bisa jatuh ke peringatan playlist/video yang sudah ada.
+ *
+ * Yang diperiksa adalah dua hal yang membuat siaran GAGAL DIMULAI, bukan sekadar
+ * kurang rapi — jadi lebih baik terlihat di halaman detail daripada muncul
+ * sebagai pesan error setelah tombol Mulai ditekan.
+ */
+function radioWarnings(isRadio, items, backgrounds) {
+  if (!isRadio) return null;
+  const warnings = [];
+  if (!items.length) warnings.push('Playlist musiknya belum berisi lagu.');
+  if (!backgrounds.length) warnings.push('Siaran radio wajib punya minimal satu gambar latar. Unggah di bawah.');
+  return warnings;
+}
+
 // ----------------------------------------------------------------- detail
 
 router.get('/:id', (req, res) => {
@@ -107,6 +132,9 @@ router.get('/:id', (req, res) => {
   const video = stream.video_id ? videoModel.findById(stream.video_id) : null;
   const playlistItems = stream.playlist_id ? playlistModel.listItems(stream.playlist_id) : [];
   const destinations = destinationModel.listForStream(stream.id);
+  const sourcePlaylist = stream.playlist_id ? playlistModel.findById(stream.playlist_id) : null;
+  const isRadio = Boolean(sourcePlaylist && sourcePlaylist.kind === 'audio');
+  const backgrounds = isRadio ? backgroundModel.listByStream(stream.id) : [];
 
   let commandPreview = null;
   try {
@@ -130,9 +158,12 @@ router.get('/:id', (req, res) => {
     account: stream.youtube_account_id ? accountModel.findById(stream.youtube_account_id) : null,
     quota: stream.youtube_account_id ? accountModel.getQuota(stream.youtube_account_id) : null,
     playlistItems,
-    warnings: stream.playlist_id
-      ? ffmpeg.playlistWarnings(stream, playlistItems)
-      : (video ? ffmpeg.compatibilityWarnings(stream, video) : ['Stream ini belum punya video sumber.']),
+    isRadio,
+    backgrounds,
+    warnings: radioWarnings(isRadio, playlistItems, backgrounds)
+      || (stream.playlist_id
+        ? ffmpeg.playlistWarnings(stream, playlistItems)
+        : (video ? ffmpeg.compatibilityWarnings(stream, video) : ['Stream ini belum punya video sumber.'])),
     commandPreview,
     uptime: humanUptime(stream.started_at),
     formatDuration,
@@ -160,6 +191,7 @@ router.post('/:id', (req, res) => {
   }
 
   streamModel.update(stream.id, req.user.id, withSchedule(req.body), destinationIds);
+  streamModel.updateRadioSettings(stream.id, req.user.id, req.body);
 
   req.session.flash = {
     type: 'success',
@@ -167,6 +199,49 @@ router.post('/:id', (req, res) => {
       ? 'Pengaturan disimpan. Perubahan encoding baru berlaku setelah stream direstart.'
       : 'Pengaturan stream disimpan.',
   };
+  res.redirect(`/streams/${stream.id}`);
+});
+
+// --------------------------------------------------- gambar latar (radio)
+
+/**
+ * Unggah gambar latar. Rute literal didaftarkan sebelum '/:bgId' — pola urutan
+ * yang sama seperti di routes/rotations.js dan routes/playlists.js.
+ *
+ * csrf.verify WAJIB setelah multer: body multipart baru terurai di sana.
+ */
+router.post('/:id/backgrounds',
+  uploadThumbnails.array('backgrounds', 30), handleUploadError, csrf.verify, verifyImageContent,
+  (req, res) => {
+    const stream = ownedStream(req);
+    const files = req.files || [];
+    if (!files.length) {
+      req.session.flash = { type: 'error', message: 'Tidak ada gambar yang diunggah.' };
+      return res.redirect(`/streams/${stream.id}`);
+    }
+
+    for (const file of files) backgroundModel.add(stream.id, relativePath(file.path));
+
+    req.session.flash = {
+      type: 'success',
+      message: `${files.length} gambar latar ditambahkan.${stream.isActive ? ' Berlaku setelah siaran direstart.' : ''}`,
+    };
+    res.redirect(`/streams/${stream.id}`);
+  });
+
+router.post('/:id/backgrounds/reorder', express.json(), (req, res) => {
+  const stream = ownedStream(req);
+  const order = Array.isArray(req.body.order) ? req.body.order.map(Number).filter(Number.isFinite) : [];
+  backgroundModel.reorder(stream.id, order);
+  res.json({ ok: true });
+});
+
+router.post('/:id/backgrounds/:bgId/delete', (req, res) => {
+  const stream = ownedStream(req);
+  const removed = backgroundModel.remove(Number(req.params.bgId), stream.id);
+  req.session.flash = removed
+    ? { type: 'success', message: 'Gambar latar dihapus.' }
+    : { type: 'error', message: 'Gambar latar tidak ditemukan.' };
   res.redirect(`/streams/${stream.id}`);
 });
 

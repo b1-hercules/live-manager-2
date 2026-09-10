@@ -55,6 +55,99 @@
 
 <div class="grid grid-main">
   <div>
+    <% if (isRadio) { %>
+      <!-- ---------------------------------------------- gambar latar radio -->
+      <div class="card">
+        <div class="card-head">
+          <h2><%- include('../partials/icon', { name: 'image' }) %> Gambar Latar</h2>
+          <span class="sub">
+            <%= backgrounds.length %> gambar ·
+            berganti tiap <%= stream.background_rotate_minutes %> menit
+          </span>
+        </div>
+
+        <div class="card-body">
+          <% if (!backgrounds.length) { %>
+            <div class="alert alert-warn" style="margin-top:0">
+              <span class="alert-icon"><%- include('../partials/icon', { name: 'alert' }) %></span>
+              <div class="text-sm">
+                Siaran radio tidak bisa dimulai tanpa gambar latar. Unggah minimal satu.
+              </div>
+            </div>
+          <% } else { %>
+            <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+              <% backgrounds.forEach(function (bg, i) { %>
+                <div style="position:relative;width:150px">
+                  <img src="<%= mediaUrl(bg.filepath) %>" alt="" loading="lazy"
+                       style="width:150px;height:84px;object-fit:cover;border-radius:6px;display:block">
+                  <div class="text-xs text-mute mt-1">#<%= i + 1 %></div>
+                  <form method="post" action="/streams/<%= stream.id %>/backgrounds/<%= bg.id %>/delete"
+                        data-confirm="Hapus gambar latar ini?"
+                        style="position:absolute;top:4px;right:4px">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button class="btn btn-danger btn-sm" type="submit"
+                            style="padding:2px 7px;line-height:1.2">×</button>
+                  </form>
+                </div>
+              <% }); %>
+            </div>
+            <p class="text-xs text-mute" style="margin:0 0 12px">
+              Gambar ditampilkan berurutan lalu diulang dari awal. Pergantiannya
+              <strong>tidak memutus siaran</strong>. Tiap gambar dipotong dan diskalakan
+              sekali di awal siaran agar pas dengan kanvas, jadi rasio yang tidak sama
+              dengan resolusi siaran akan terpangkas.
+            </p>
+          <% } %>
+
+          <form method="post" action="/streams/<%= stream.id %>/backgrounds" enctype="multipart/form-data">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <div class="field">
+              <label for="backgrounds">Tambah gambar <span class="text-mute">(bisa banyak sekaligus, maks 30)</span></label>
+              <input id="backgrounds" name="backgrounds" type="file"
+                     accept="image/png,image/jpeg,image/webp" multiple required>
+            </div>
+            <div class="btn-row">
+              <button class="btn btn-primary btn-sm" type="submit">
+                <%- include('../partials/icon', { name: 'upload' }) %> Unggah Latar
+              </button>
+              <% if (stream.isActive) { %>
+                <span class="text-xs text-mute">
+                  Siaran sedang berjalan — gambar baru berlaku setelah direstart.
+                </span>
+              <% } %>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- ------------------------------------------------- setelan spektrum -->
+      <div class="card">
+        <div class="card-head">
+          <h2>Spektrum Audio</h2>
+          <a class="btn btn-sm" href="/streams/<%= stream.id %>/edit">Ubah</a>
+        </div>
+        <div class="card-body">
+          <dl class="kv">
+            <dt>Bentuk</dt>
+            <dd>
+              <%= stream.spectrum_mode %><%= stream.spectrum_mirror && stream.spectrum_mode !== 'wave' ? ' · cermin' : '' %>
+            </dd>
+            <dt>Ukuran</dt>
+            <dd class="mono"><%= stream.spectrum_width %> × <%= stream.spectrum_height %> px</dd>
+            <dt>Letak</dt>
+            <dd class="mono">
+              <%= stream.spectrum_x === null ? 'tengah' : stream.spectrum_x + ' px dari kiri' %>,
+              <%= stream.spectrum_y %> px dari atas
+            </dd>
+            <dt>Warna</dt>
+            <dd>
+              <span style="display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle;background:<%= stream.spectrum_color %>"></span>
+              <span class="mono"><%= stream.spectrum_color %></span>
+            </dd>
+          </dl>
+        </div>
+      </div>
+    <% } %>
     <!-- ------------------------------------------------- rotasi live -->
     <div class="card">
       <div class="card-head">

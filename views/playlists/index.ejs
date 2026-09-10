@@ -3,7 +3,7 @@
 <div class="card mb-2">
   <div class="card-head">
     <h2>Playlist Baru</h2>
-    <span class="sub">beberapa video diputar berurutan dalam satu siaran</span>
+    <span class="sub">beberapa berkas diputar berurutan dalam satu siaran</span>
   </div>
   <div class="card-body">
     <form method="post" action="/playlists">
@@ -14,10 +14,21 @@
           <input id="name" name="name" type="text" required maxlength="120" placeholder="Musik Lo-fi 24 Jam">
         </div>
         <div class="field">
+          <label for="kind">Jenis</label>
+          <select id="kind" name="kind">
+            <option value="video">Video — diputar berurutan sebagai siaran biasa</option>
+            <option value="audio">Musik — untuk siaran ala radio</option>
+          </select>
+        </div>
+        <div class="field">
           <label for="description">Catatan <span class="text-mute">(opsional)</span></label>
           <input id="description" name="description" type="text" maxlength="500">
         </div>
       </div>
+      <p class="text-xs text-mute" style="margin:0 0 10px">
+        Jenis ditetapkan sekarang dan tidak bisa diubah lagi — isinya sudah terlanjur
+        menyesuaikan. Kalau salah pilih, buat playlist baru.
+      </p>
       <button class="btn btn-primary" type="submit">
         <%- include('../partials/icon', { name: 'plus' }) %> Buat Playlist
       </button>
@@ -49,7 +60,13 @@
             <div class="t"><a href="/playlists/<%= p.id %>"><%= p.name %></a></div>
             <% if (p.description) { %><div class="d"><%= p.description %></div><% } %>
             <div class="text-xs text-mute mt-1">
-              <%= p.item_count %> video · total <%= formatDuration(p.total_duration) %>
+              <% if (p.kind === 'audio') { %>
+                <span class="badge badge-accent">musik</span>
+                <%= p.item_count %> lagu
+              <% } else { %>
+                <%= p.item_count %> video
+              <% } %>
+              · total <%= formatDuration(p.total_duration) %>
               <% if (p.shuffle) { %> · <span class="badge badge-accent">acak</span><% } %>
             </div>
           </div>

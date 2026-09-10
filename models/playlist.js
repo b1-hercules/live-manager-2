@@ -16,7 +16,10 @@ function hydrate(row) {
   return { ...row, shuffle: Boolean(row.shuffle) };
 }
 
-function listByUser(userId) {
+/** `kind: null` berarti sengaja tidak disaring — tampilkan video dan musik. */
+function listByUser(userId, { kind = null } = {}) {
+  const filter = kind ? ' AND p.kind = ?' : '';
+  const args = kind ? [userId, kind] : [userId];
   return db
     .prepare(
       `SELECT p.*,
@@ -25,10 +28,10 @@ function listByUser(userId) {
                  FROM playlist_items pi JOIN videos v ON v.id = pi.video_id
                 WHERE pi.playlist_id = p.id) AS total_duration
          FROM playlists p
-        WHERE p.user_id = ?
+        WHERE p.user_id = ?${filter}
         ORDER BY p.created_at DESC`
     )
-    .all(userId)
+    .all(...args)
     .map(hydrate);
 }
 
@@ -40,17 +43,24 @@ function findById(id, userId = null) {
   return hydrate(row);
 }
 
-function create(userId, { name, description = null, shuffle = 0 }) {
+/**
+ * `kind` ditetapkan saat dibuat dan TIDAK pernah bisa diubah sesudahnya —
+ * update() sengaja tidak menyentuhnya. Playlist video yang berubah jadi audio
+ * akan membawa serta isinya yang salah jenis, dan itu baru ketahuan saat siaran
+ * dijalankan.
+ */
+function create(userId, { name, description = null, shuffle = 0, kind = 'video' }) {
   const info = db
     .prepare(
-      `INSERT INTO playlists (user_id, name, description, shuffle, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO playlists (user_id, name, description, shuffle, kind, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       userId,
       String(name || 'Playlist baru').slice(0, 120),
       description ? String(description).slice(0, 500) : null,
       toBool(shuffle) ? 1 : 0,
+      kind === 'audio' ? 'audio' : 'video',
       now(),
       now()
     );

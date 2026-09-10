@@ -88,6 +88,18 @@ const verifyVideoContent = verifyContent('video', 'video');
 const verifyImageContent = verifyContent('image', 'gambar');
 const verifyAudioContent = verifyContent('audio', 'audio');
 
+/**
+ * Pilih keluarga yang divalidasi dari field `kind` di form.
+ *
+ * Mempercayai body di sini aman: yang ditentukan field itu hanyalah signature
+ * MANA yang harus cocok, dan isi berkaslah yang memutuskan diterima atau tidak.
+ * Mengaku 'audio' lalu mengunggah MP4 tetap ditolak.
+ */
+function verifyMediaContent(req, res, next) {
+  const audio = req.body && req.body.kind === 'audio';
+  return verifyContent(audio ? 'audio' : 'video', audio ? 'audio' : 'video')(req, res, next);
+}
+
 /** Ubah path absolut hasil multer jadi path relatif untuk disimpan di DB. */
 function relativePath(absolute) {
   return path.relative(config.root, absolute).split(path.sep).join('/');
@@ -109,6 +121,6 @@ function handleUploadError(err, req, res, next) {
 
 module.exports = {
   uploadVideo, uploadThumbnail, uploadThumbnails,
-  verifyVideoContent, verifyImageContent, verifyAudioContent, contentError,
+  verifyVideoContent, verifyImageContent, verifyAudioContent, verifyMediaContent, contentError,
   relativePath, handleUploadError, VIDEO_EXT, IMAGE_EXT,
 };

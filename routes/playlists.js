@@ -35,7 +35,13 @@ router.post('/', (req, res) => {
     req.session.flash = { type: 'error', message: 'Nama playlist wajib diisi.' };
     return res.redirect('/playlists');
   }
-  const playlist = playlistModel.create(req.user.id, { name, description: req.body.description });
+  const playlist = playlistModel.create(req.user.id, {
+    name,
+    description: req.body.description,
+    // Jenis playlist menentukan isinya boleh apa, dan tidak bisa diubah lagi
+    // setelah ini — lihat catatan di models/playlist.js create().
+    kind: req.body.kind === 'audio' ? 'audio' : 'video',
+  });
   req.session.flash = { type: 'success', message: `Playlist "${playlist.name}" dibuat.` };
   res.redirect(`/playlists/${playlist.id}`);
 });
@@ -50,10 +56,15 @@ router.get('/:id', (req, res) => {
     title: playlist.name,
     playlist,
     items,
-    videos: videoModel.listByUser(req.user.id),
+    // Pemilih isi mengikuti jenis playlist-nya: playlist musik hanya boleh
+    // menawarkan musik, dan sebaliknya.
+    videos: videoModel.listByUser(req.user.id, { kind: playlist.kind }),
     totalDuration: items.reduce((total, item) => total + (Number(item.duration) || 0), 0),
-    copyWarnings: ffmpeg.playlistWarnings({ encode_mode: 'copy' }, items),
-    reencodeWarnings: ffmpeg.playlistWarnings({ encode_mode: 'reencode' }, items),
+    // Peringatan kecocokan spesifikasi hanya berlaku untuk playlist video:
+    // concat menyambung gambar, sedangkan playlist musik ditangani liquidsoap
+    // yang menormalkan audionya sendiri.
+    copyWarnings: playlist.kind === 'audio' ? [] : ffmpeg.playlistWarnings({ encode_mode: 'copy' }, items),
+    reencodeWarnings: playlist.kind === 'audio' ? [] : ffmpeg.playlistWarnings({ encode_mode: 'reencode' }, items),
     usedBy: playlistModel.usedByStreams(playlist.id),
     formatBytes,
     formatDuration,
@@ -93,7 +104,18 @@ router.post('/:id/items', (req, res) => {
   // Video harus milik pengguna yang sama — id dari form tidak dipercaya.
   const video = videoModel.findById(req.body.video_id);
   if (!video || video.user_id !== req.user.id) {
-    req.session.flash = { type: 'error', message: 'Video tidak ditemukan.' };
+    req.session.flash = { type: 'error', message: 'Berkas tidak ditemukan.' };
+    return res.redirect(`/playlists/${playlist.id}`);
+  }
+  // Jenisnya wajib cocok. Menyusupkan MP3 ke playlist video lolos di form yang
+  // dipalsukan, dan akibatnya baru terlihat sebagai siaran rusak.
+  if ((video.kind || 'video') !== playlist.kind) {
+    req.session.flash = {
+      type: 'error',
+      message: playlist.kind === 'audio'
+        ? 'Playlist musik hanya bisa diisi berkas musik.'
+        : 'Playlist video hanya bisa diisi berkas video.',
+    };
     return res.redirect(`/playlists/${playlist.id}`);
   }
   playlistModel.addItem(playlist.id, video.id);
