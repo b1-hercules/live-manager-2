@@ -40,9 +40,10 @@ dan lainnya **tidak butuh OAuth sama sekali** — cukup file video dan stream ke
 
 Kalau belum butuh keduanya, lewati langkah bertanda *(Google)*.
 
-1. **Isi `.env`, lalu jalankan aplikasi** — lewat [Docker](#docker-disarankan-untuk-vps)
-   (disarankan untuk VPS) *atau* [`npm start`](#instalasi), jangan keduanya bersamaan. Tiga nilai
-   ini wajib benar **sebelum** start pertama:
+1. **Isi `.env`, lalu jalankan aplikasi** — paling cepat dengan
+   [`./install.sh`](#cara-tercepat-installsh), yang mengerjakan langkah ini untuk
+   [Docker](#docker-disarankan-untuk-vps) (disarankan untuk VPS) maupun npm + PM2. Pilih salah satu
+   cara, jangan keduanya bersamaan. Tiga nilai ini wajib benar **sebelum** start pertama:
    - `SESSION_SECRET` dan `ENCRYPTION_KEY` — dari `npm run generate-secret`. `ENCRYPTION_KEY`
      mengunci stream key dan token Google; menggantinya belakangan berarti mengisi ulang semuanya.
    - `APP_URL` — alamat yang **persis** kamu ketik di browser. Nilai ini menjadi redirect URI
@@ -242,6 +243,37 @@ berebut port 7575 dan memakai database yang sama, sehingga penjadwal dan siaran 
 > Di Ubuntu 24.04, FFmpeg 6.1 bawaan sistem tidak mencetak `frame=`/`fps=` pada mode Copy, sehingga
 > angka FPS, bitrate, dan bandwidth keluar tetap kosong walau siarannya berjalan normal. FFmpeg 5.1
 > di image Docker tidak kena masalah ini.
+
+### Cara tercepat: `install.sh`
+
+Satu skrip untuk kedua cara — tinggal pilih:
+
+```bash
+git clone <repo-kamu> livemanager
+cd livemanager
+./install.sh            # menu: 1) Docker   2) npm + PM2
+./install.sh docker     # atau langsung, tanpa menu
+```
+
+Yang dikerjakan skrip ini:
+
+- **`.env`** — dibuat dari `.env.example`; `SESSION_SECRET` dan `ENCRYPTION_KEY` diisi kalau masih
+  kosong atau masih bernilai contoh `ganti-dengan-…`. Kunci yang sudah terisi **tidak pernah**
+  diganti. Lalu `APP_URL` ditanyakan.
+- **Docker** — memasang `docker.io` dan plugin compose kalau belum ada, lalu
+  `docker compose up -d --build`.
+- **npm** — memeriksa versi Node, memasang FFmpeg (dan liquidsoap, opsional) lewat apt,
+  `npm install`, lalu menjalankan aplikasi lewat PM2 dan, kalau disetujui, mendaftarkannya supaya
+  menyala lagi setelah reboot.
+- Menolak jalan kalau port 7575 sudah dipegang cara yang lain, lalu menunggu sampai `/health`
+  menjawab.
+
+Setiap langkah yang memakai `sudo` ditanyakan dulu; `-y` menjawab "ya" untuk semuanya
+(`./install.sh docker -y`). Skrip ini untuk Ubuntu/Debian (apt) dan aman dijalankan ulang — misalnya
+setelah `git pull` untuk memperbarui. Distro lain, atau ingin tahu persis apa yang terjadi: ikuti
+langkah manual di bawah dan di bagian [Docker](#docker-disarankan-untuk-vps).
+
+### Manual dengan Node (`npm start`)
 
 ```bash
 git clone <repo-kamu> livemanager
@@ -597,6 +629,7 @@ Google Cloud Console.
 ## Struktur proyek
 
 ```
+install.sh                pemasang: pilih Docker atau npm + PM2 (Ubuntu/Debian)
 app.js                    entry point, wiring Express
 config/index.js           konfigurasi terpusat dari .env
 db/
@@ -628,6 +661,7 @@ tests/                    skrip tes Node polos — lihat tests/README.md
 
 | Perintah | Fungsi |
 |---|---|
+| `./install.sh` | pasang & jalankan — menu Docker atau npm + PM2 ([Cara tercepat](#cara-tercepat-installsh)) |
 | `npm start` | jalankan aplikasi |
 | `npm run dev` | jalankan dengan nodemon |
 | `npm test` | jalankan seluruh tes (butuh ffmpeg; menyentuh DB kerja dengan backup & restore) |

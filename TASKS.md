@@ -284,6 +284,42 @@ karena `COPY . .` tanpa `.dockerignore` (lihat FINDINGS), bukan karena liquidsoa
 
 ## DONE
 
+### Skrip pemasang `install.sh` (Docker atau npm + PM2) — 2026-09-10
+
+Diminta user: satu skrip `.sh` untuk memasang lewat Docker atau npm, tinggal
+pilih. Sebelumnya belum ada (0 berkas `.sh` di repo).
+
+- `install.sh` (baru, root proyek) — menu 1) Docker 2) npm + PM2, atau langsung
+  `./install.sh docker|npm`; `-y` menjawab "ya" untuk semua pertanyaan.
+  Rancangan yang diasumsikan (belum dikonfirmasi user): paket sistem hanya lewat
+  apt (Ubuntu/Debian); setiap `sudo` ditanyakan dulu; mode npm memakai PM2
+  (menolak PM2 → `npm start` di terminal).
+  - `.env`: placeholder `ganti-dengan-…` dari `.env.example` **diganti**.
+    `config/index.js` maupun `${VAR:?}` di `docker-compose.yml` hanya memeriksa
+    "tidak kosong", jadi placeholder itu diterima apa adanya sebagai kunci.
+    Kunci yang sudah terisi tidak pernah diganti.
+  - Docker: pasang `docker.io` + `docker-compose-v2` (atau `docker-compose-plugin`
+    kalau `docker-ce` terpasang), `sudo docker` untuk sesi itu kalau user belum
+    punya hak ke docker.sock, lalu `compose up -d --build`.
+  - npm: Node ≥ 18 (peringatan kalau bukan 22, tawarkan build tools kalau > 22),
+    FFmpeg wajib, liquidsoap opsional, peringatan FFmpeg ≥ 6.1 (lihat FINDINGS
+    soal `STATS_RE`), chown sisa berkas root dari Docker, `npm install`, PM2
+    start/restart + save + startup.
+  - Kedua mode menolak jalan kalau port sudah dipegang cara yang lain (database
+    bersama), lalu menunggu `/health` menjawab.
+- Tes baru `tests/test-install-sh.js`: skrip dijalankan terhadap stub (sudo,
+  apt-get, docker, npm, pm2, ss, curl, ...) dengan PATH dibatasi, jadi tidak ada
+  perintah sungguhan yang tersentuh. 53/53. **Dibuktikan bisa merah** lewat
+  `INSTALL_SH=` pada dua salinan rusak: tanpa penggantian placeholder → 3 gagal
+  (tepat asersi `.env`); tanpa cek port → 3 gagal (tepat asersi port). Satu
+  kegagalan awal ternyata bug di tes: `includes('pm2 start')` ikut cocok dengan
+  `pm2 startup`.
+- README: "Cara tercepat: `install.sh`" di Instalasi, tautan di langkah 1 Mulai
+  cepat, tabel Perintah, Struktur proyek.
+
+Belum dijalankan sungguhan di mesin mana pun (memasang paket butuh sudo), dan
+`shellcheck` tidak tersedia di mesin ini — pemeriksaan statisnya hanya `bash -n`.
+
 ### Panduan urutan persiapan + modal Drive yang tak bisa ditutup — 2026-09-10
 
 Diminta user: README belum menjelaskan cara menjalankan dengan Docker, cara
