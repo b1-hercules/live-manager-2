@@ -45,6 +45,12 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
+/* Atribut `hidden` harus selalu menang. Aturan bawaannya (display: none) ada di
+   stylesheet browser, dan kelas mana pun yang menyetel display mengalahkannya —
+   .modal-backdrop (grid) membuat modal Impor dari Drive tampil sejak /videos
+   dibuka dan tombol Tutup-nya tak berefek. Dijaga tests/test-hidden-attr.js. */
+[hidden] { display: none !important; }
+
 html, body { height: 100%; }
 
 body {
