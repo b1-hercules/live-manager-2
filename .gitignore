@@ -19,3 +19,7 @@ Thumbs.db
 CLAUDE.md
 AGENTS.md
 tests/.run.lock
+
+# Manajer versi runtime lokal (mise), tidak ikut repo
+mise.toml
+.mise.toml
