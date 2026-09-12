@@ -8,6 +8,7 @@ const engine = require('ejs-mate');
 const config = require('./config');
 const { migrate } = require('./db/migrate');
 const { createLogger } = require('./utils/logger');
+const { assetUrl } = require('./utils/asset-version');
 
 const SqliteStore = require('./middleware/sessionStore');
 const { loadUser, requireAuth, requireSetup } = require('./middleware/auth');
@@ -36,6 +37,11 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.locals.appName = 'LiveManager';
 app.locals.appVersion = require('./package.json').version;
+
+// URL aset dengan penanda versi. Wajib dipakai layout untuk semua CSS/JS di
+// /assets: tanpa itu Cache-Control 7 hari di bawah membuat browser memegang
+// berkas lama sampai seminggu setelah rebuild. Dijaga tests/test-asset-version.js.
+app.locals.assetUrl = assetUrl;
 
 /**
  * Path media disimpan relatif terhadap root ("storage/thumbnails/x.jpg"),
