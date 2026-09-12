@@ -5,6 +5,7 @@ const config = require('../config');
 const settings = require('../models/settings');
 const rotationModel = require('../models/rotation');
 const ffmpegService = require('../services/ffmpeg');
+const liquidsoapService = require('../services/liquidsoap');
 const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
@@ -28,6 +29,7 @@ router.get('/', async (req, res) => {
     encryptionDerived: config.encryptionKeyIsDerived,
     sessionEphemeral: config.sessionSecretIsEphemeral,
     ffmpegStatus: req.app.locals.ffmpegStatus || { ok: false, error: 'Belum diperiksa' },
+    liquidsoapStatus: req.app.locals.liquidsoapStatus || { ok: false, error: 'Belum diperiksa' },
     envClientId: Boolean(process.env.GOOGLE_CLIENT_ID),
     envClientSecret: Boolean(process.env.GOOGLE_CLIENT_SECRET),
   });
@@ -76,6 +78,15 @@ router.post('/ffmpeg/check', async (req, res) => {
   req.session.flash = status.ok
     ? { type: 'success', message: `FFmpeg terdeteksi: ${status.version}` }
     : { type: 'error', message: `FFmpeg tidak ditemukan: ${status.error}` };
+  res.redirect('/settings');
+});
+
+router.post('/liquidsoap/check', async (req, res) => {
+  const status = await liquidsoapService.checkAvailability();
+  req.app.locals.liquidsoapStatus = status;
+  req.session.flash = status.ok
+    ? { type: 'success', message: `Liquidsoap terdeteksi: ${status.version}` }
+    : { type: 'error', message: `Liquidsoap tidak ditemukan: ${status.error}` };
   res.redirect('/settings');
 });
 

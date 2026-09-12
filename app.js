@@ -19,6 +19,7 @@ const streamManager = require('./services/streamManager');
 const rotationEngine = require('./services/rotationEngine');
 const scheduler = require('./services/scheduler');
 const ffmpegService = require('./services/ffmpeg');
+const liquidsoapService = require('./services/liquidsoap');
 
 const log = createLogger('app');
 
@@ -42,6 +43,10 @@ app.locals.appVersion = require('./package.json').version;
 // /assets: tanpa itu Cache-Control 7 hari di bawah membuat browser memegang
 // berkas lama sampai seminggu setelah rebuild. Dijaga tests/test-asset-version.js.
 app.locals.assetUrl = assetUrl;
+
+// Diisi boot(). Nilai awal ini ada supaya view yang dirender tanpa boot()
+// — tes merender langsung — tidak meledak saat membaca .ok.
+app.locals.liquidsoapStatus = { ok: false, error: 'Belum diperiksa.' };
 
 /**
  * Path media disimpan relatif terhadap root ("storage/thumbnails/x.jpg"),
@@ -124,6 +129,17 @@ async function boot() {
     log.info(`FFmpeg siap: ${ffmpegStatus.version}`);
   } else {
     log.error(`FFmpeg TIDAK ditemukan (${ffmpegStatus.error}). Streaming tidak akan bisa dimulai.`);
+  }
+
+  // Liquidsoap hanya dipakai mode radio, jadi ketiadaannya bukan kegagalan
+  // startup — cuma berarti siaran musik tidak tersedia di mesin ini. Diperiksa
+  // di sini supaya ketahuan sebelum tombol Mulai ditekan, bukan sesudahnya.
+  const liquidsoapStatus = await liquidsoapService.checkAvailability();
+  app.locals.liquidsoapStatus = liquidsoapStatus;
+  if (liquidsoapStatus.ok) {
+    log.info(`Liquidsoap siap: ${liquidsoapStatus.version}`);
+  } else {
+    log.warn(`Liquidsoap tidak ditemukan (${liquidsoapStatus.error}). Siaran radio tidak akan bisa dimulai; mode video tidak terpengaruh.`);
   }
 
   // Proses FFmpeg tidak selamat dari restart aplikasi; bereskan status lama.

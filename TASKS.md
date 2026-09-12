@@ -16,6 +16,46 @@ _(kosong — fitur siaran radio sudah selesai, lihat DONE)_
 
 ## DONE
 
+### Liquidsoap ikut diperiksa, dan ketiadaannya kelihatan — 2026-09-12
+
+`services/liquidsoap.js` punya `checkAvailability()` sejak fitur radio dibuat,
+tetapi **nol pemanggil**. `app.js` dan `routes/settings.js` sama-sama memanggil
+`checkAvailability()` milik `services/ffmpeg.js` — nama yang kembar persis, dan
+GitNexus sempat melaporkan kedua berkas itu sebagai pemanggil versi liquidsoap
+(lihat FINDINGS). Akibatnya aplikasi tidak pernah tahu liquidsoap terpasang atau
+tidak, halaman Pengaturan hanya menampilkan FFmpeg, dan pengguna baru menemukan
+masalahnya sebagai siaran radio yang gagal start setelah menunggu ±15 detik.
+
+- `app.js` — `boot()` memeriksa liquidsoap dan menyimpannya di
+  `app.locals.liquidsoapStatus`. Log-nya **warn, bukan error**: ketiadaan
+  liquidsoap hanya mematikan mode radio, siaran video tidak terpengaruh. Nilai
+  awal disetel sebelum boot supaya view yang dirender tanpa `boot()` — tes
+  merender langsung — tidak meledak saat membaca `.ok`.
+- `routes/streams.js` — `radioWarnings()` menerima status itu dan
+  memperingatkan di halaman detail siaran, tempat dua peringatan radio lain
+  sudah tampil. Ini yang paling berguna: penyebabnya terbaca **sebelum** tombol
+  Mulai ditekan, lengkap dengan pesan asli spawn dan jalan keluarnya
+  (`LIQUIDSOAP_PATH`). Status yang belum diperiksa (`undefined`) sengaja tidak
+  memunculkan peringatan, supaya halaman tidak mengarang masalah.
+- `routes/settings.js` + `views/settings.ejs` — kartu Liquidsoap di samping
+  kartu FFmpeg, berikut tombol Cek Ulang (`POST /settings/liquidsoap/check`).
+  Keadaan "tidak ditemukan" memakai `alert-warn`, bukan `alert-error` seperti
+  FFmpeg, dan menyebut sendiri bahwa siaran video tetap jalan.
+- `radioWarnings` diekspor semata untuk bisa diuji langsung.
+
+`tests/test-liquidsoap-status.js` (baru, 27 pemeriksaan) — tanpa database dan
+tanpa server: `db/index.js` disuntik lewat `require.cache` seperti pola
+`test-google-gating.js`, jadi tes ini aman dijalankan selagi aplikasi hidup.
+Dibuktikan **MERAH** dulu di worktree HEAD: 7 pemeriksaan gagal lalu berhenti
+dengan `TypeError: radioWarnings is not a function`. Hijau **27/27** sesudahnya.
+Karena namanya kembar, asersi sengaja mencari `liquidsoapService.checkAvailability(`
+— menyebut modulnya — bukan nama fungsinya saja.
+
+Suite penuh belum dijalankan: container `livemanager` sedang hidup dan penjaga
+`tests/run.js` menolak, tepat seperti yang dirancang. Tiga tes statis lain yang
+menyentuh view ikut dijalankan sendiri dan tetap hijau: `test-asset-version`
+(10), `test-google-gating` (29), `test-hidden-attr` (3).
+
 ### Penjaga: tes menolak jalan selagi aplikasi hidup — 2026-09-12
 
 Bukan kekhawatiran teoretis. Pada 2026-09-12 `npm test` dijalankan sambil
@@ -866,7 +906,7 @@ Hasil investigasi gap-analysis (GitNexus query/FTS lagi degraded di mesin ini �
 - **Batang `showfreqs` jauh lebih pendek dari kotaknya** (2026-09-10, diukur): dengan `ascale=cbrt` dan derau pink a=0.5, batangnya hanya mengisi pita 20px paling bawah dari kotak setinggi 120px. Akibatnya menguji "apakah spektrum tergambar" dengan merata-ratakan seluruh kotak MENYESATKAN — selisihnya cuma 0,9 luma dan terbaca seperti gagal, padahal pada pita yang benar selisihnya 40 luma (115,4 saat berbunyi versus 75,3 saat senyap). Ukur luma puncak antar pita, jangan rata-rata kotak. Untuk UI: kotak spektrum yang tinggi akan tampak banyak kosong pada musik yang tidak keras — itu perilaku `showfreqs`, bukan bug.
 - **`test-concat-cleanup` bisa gagal karena mesin berat, bukan karena kode** (2026-09-10): asersi "siaran playlist benar-benar mengalir" menunggu `stats.frame > 0` dari sink RTMP sungguhan dengan batas waktu. Saat mesin sibuk ia gagal, dan berkas itu memakan **47 detik**; saat normal lolos dalam **22 detik**. Cara memastikannya sebelum menyalahkan perubahan sendiri: jalankan berkas itu sendirian (`npm test -- concat`) dan bandingkan durasinya dengan run yang sehat. Durasi yang membengkak dua kali lipat adalah tandanya.
 - **Jangan salurkan `npm test` lewat `tail` saat dijalankan di latar belakang** (2026-09-10): keluaran yang tersimpan hanya ringkasannya, dan detail asersi yang gagal ikut hilang — persis yang dibutuhkan untuk mendiagnosis. Simpan keluaran utuh, potong saat membacanya.
-- **`liquidsoap.checkAvailability()` tidak pernah dipanggil; GitNexus bilang sebaliknya** (2026-09-10, diverifikasi dengan grep): `context` untuk simbol ini melaporkan pemanggil `app.js` `boot` dan `routes/settings.js`, padahal kedua berkas itu memanggil `ffmpegService.checkAvailability()` — fungsi bernama sama di `services/ffmpeg.js`. Index mengatribusikan panggilan ke KEDUA simbol yang namanya kembar. Akibat nyatanya: aplikasi tidak pernah memeriksa ketersediaan liquidsoap, dan halaman Pengaturan hanya menampilkan status FFmpeg. Pelajaran umum: untuk nama yang kembar lintas modul, jawaban `context`/`impact` wajib dicek silang dengan grep pada pola `<modul>.<nama>(`.
+- **`liquidsoap.checkAvailability()` tidak pernah dipanggil; GitNexus bilang sebaliknya** (2026-09-10, diverifikasi dengan grep): `context` untuk simbol ini melaporkan pemanggil `app.js` `boot` dan `routes/settings.js`, padahal kedua berkas itu memanggil `ffmpegService.checkAvailability()` — fungsi bernama sama di `services/ffmpeg.js`. Index mengatribusikan panggilan ke KEDUA simbol yang namanya kembar. Akibat nyatanya: aplikasi tidak pernah memeriksa ketersediaan liquidsoap, dan halaman Pengaturan hanya menampilkan status FFmpeg. Pelajaran umum: untuk nama yang kembar lintas modul, jawaban `context`/`impact` wajib dicek silang dengan grep pada pola `<modul>.<nama>(`. **Diperbaiki 2026-09-12** (lihat DONE). Impact ulang atas nama kembar itu masih memberi `UNKNOWN` di tingkat atas, lalu memecahnya jadi dua: `services/ffmpeg.js` 13 simbol LOW dan `services/liquidsoap.js` 9 simbol LOW — angka kedua itu yang membuktikan pemanggilnya kini benar-benar ada.
 - **Mesin kerja pindah ke Ubuntu 24.04 (2026-09-10)**: `better-sqlite3@11.10.0` tidak punya prebuilt untuk Node 24 (`No prebuilt binaries found (target=24.21.0)`) dan jatuh ke kompilasi yang butuh `make`. Dipakai Node 22 lewat `mise exec node@22 -- ...` — sama dengan base image `node:22-bookworm-slim`, jadi tes berjalan di runtime produksi. Versi liquidsoap berbeda di tiap tempat: Ubuntu 24.04 **2.2.4**, Debian bookworm (image Docker) **2.1.3**, trixie **2.3.2**; FFmpeg 6.1 di host versus 5.1 di image. Lulus di host tidak membuktikan image.
 - **`spawn()` TIDAK melempar untuk binary yang tidak ada** (2026-09-10, diuji di Node 22.23.2 dan 24.21.0, hasil identik): kembaliannya objek dengan `pid === undefined`, lalu event `error` (`ENOENT`), disusul `close` dengan kode **-2**. Akibatnya `try/catch` di sekitar `liquidsoap.spawnEngine()` dalam `launch()` tidak pernah menangkap "liquidsoap tidak terpasang": FFmpeg tetap dijalankan, status sempat `live`, lalu handler `close` liquidsoap mematikan FFmpeg dan siaran jatuh ke auto-restart berulang alih-alih gagal dengan pesan jelas. Dihitung dari konstanta `streamManager.js`: jeda 5+10+20+40+80+120×5 = **±12,6 menit** bolak-balik (uptime tiap putaran tak pernah melewati `STABLE_AFTER_MS` 60 dtk, jadi hitungan tidak di-reset), berakhir "Gagal setelah 10 percobaan restart"; tanpa auto-restart pesannya "FFmpeg berhenti (kode null)" — menyalahkan FFmpeg. Penyebab sebenarnya hanya ada di satu baris log "Proses liquidsoap error: spawn liquidsoap ENOENT". Ketiga calon titik perbaikan (`launch`, `resolveRadioSource`, `prepareRadioFiles`) HIGH lewat proses `start`/`startDueStreams`/`timer`. Pola `try { spawn } catch` yang sama juga ada di jalur FFmpeg (`ffmpeg.spawnStream`), perilaku lama yang belum disentuh.
 - **Liquidsoap sungguhan butuh ±15 detik sebelum harbor terbuka, dan `-reconnect` TIDAK menolong koneksi pertama** (2026-09-10, diukur di Ubuntu 24.04, liquidsoap 2.2.4, FFmpeg 6.1): "Standard library loaded in 13.93 seconds", harbor terbuka pada 14,8 dtk — sama pada putaran kedua (13,44 dtk; tidak ada cache). FFmpeg dengan flag persis `buildRadioArgs()` (`-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2`) terhadap port yang belum dibuka: **gagal dalam 213 ms**, "Connection refused". Menambah `-reconnect_on_network_error 1` dengan `delay_max 2`: menyerah dalam 1,5 dtk. Dengan `delay_max 16`: mencoba ulang pada +3/+7/+15 dtk dan berhasil, tetapi baru tersambung ±9 dtk setelah harbor siap, dan `delay_max` itu ikut mengubah perilaku sambung-ulang di tengah siaran. Akibatnya bagi `launch()` — yang menjalankan FFmpeg seketika setelah liquidsoap dengan anggapan "-reconnect membuat ia mencoba lagi sendiri" — FFmpeg mati sebelum harbor siap, `handleExit` membunuh liquidsoap, dan restart memulai keduanya dari nol; harbor tidak pernah sempat siap. **Disimpulkan dari dua pengukuran di atas plus pembacaan kode, belum diamati lewat aplikasi.** Tes lama tidak menangkapnya karena harbor tiruannya sudah mendengarkan sebelum FFmpeg jalan. Instalasi lama selamat karena liquidsoap hidup terus sebagai layanan terpisah dan hanya FFmpeg yang diulang.
