@@ -393,6 +393,36 @@ function launch(streamId, args, destinations, { manual, liq = null }) {
     return { ok: false, error: err.message };
   }
 
+  // spawn() TIDAK melempar untuk binary yang tidak ada — diuji di Node 22.23.2
+  // dan 24.21.0, hasilnya sama: kembaliannya objek dengan pid undefined, lalu
+  // event "error" (ENOENT), disusul "close" dengan kode -2. Artinya catch di
+  // atas tidak pernah jalan untuk "FFmpeg tidak terpasang". Tanpa penjagaan ini
+  // siaran sempat berstatus live tanpa pid, lalu handleExit memutarnya ke
+  // auto-restart: 5+10+20+40+80+120x5 detik = ±12,6 menit bolak-balik yang
+  // berakhir dengan pesan menyalahkan FFmpeg berhenti, bukan menyebut binary
+  // yang hilang. Kegagalan ini final — mengulanginya tidak akan menolong.
+  if (!proc || proc.pid === undefined) {
+    // Pendengar "error" wajib dipasang: event error tanpa pendengar menjatuhkan
+    // seluruh aplikasi. Sekaligus menaruh kata-kata Node sendiri ("spawn ffmpeg
+    // ENOENT") ke log siaran, tempat orang mencarinya.
+    if (proc) {
+      proc.on('error', (err) => {
+        streamModel.addLog(streamId, 'error', `Proses FFmpeg error: ${err.message}`);
+      });
+    }
+    if (lsProc) killProcess(lsProc);
+    const message = `FFmpeg tidak bisa dijalankan: binary "${ffmpeg.ffmpegPath()}" tidak ditemukan. Periksa FFMPEG_PATH di .env.`;
+    streamModel.setStatus(streamId, 'error', {
+      pid: null,
+      ended_at: new Date().toISOString(),
+      error_message: message,
+    });
+    streamModel.addLog(streamId, 'error', message);
+    cleanupStreamFiles(streamId);
+    log.error(`Stream #${streamId} gagal mulai: ${message}`);
+    return { ok: false, error: message };
+  }
+
   const sessionId = streamModel.openSession(streamId);
   const state = {
     proc,
@@ -406,7 +436,7 @@ function launch(streamId, args, destinations, { manual, liq = null }) {
     stopping: false,
     stopReason: null,
     logs: [],
-    stats: { frame: 0, fps: 0, bitrate: '-', time: '-', speed: '-', updatedAt: null },
+    stats: { frame: null, fps: null, bitrate: '-', time: '-', timeSeconds: 0, speed: '-', updatedAt: null },
     restarts: manual ? 0 : (running.get(streamId)?.restarts || 0),
   };
   running.set(streamId, state);
@@ -460,8 +490,57 @@ function launch(streamId, args, destinations, { manual, liq = null }) {
 // telanjang, tergantung platform dan apakah barisnya baris progres.
 const SPLIT_LINES = /\r?\n|\r/;
 
-const STATS_RE = /frame=\s*(\d+).*?fps=\s*([\d.]+).*?bitrate=\s*(\S+).*?speed=\s*(\S+)/;
-const TIME_RE = /time=(\d{2}:\d{2}:\d{2}\.\d{2})/;
+const TIME_RE = /\btime=\s*(\d{2}:\d{2}:\d{2}\.\d{2})/;
+const FRAME_RE = /\bframe=\s*(\d+)/;
+const FPS_RE = /\bfps=\s*([\d.]+)/;
+const BITRATE_RE = /\bbitrate=\s*(\S+)/;
+const SPEED_RE = /\bspeed=\s*(\S+)/;
+
+/** "00:01:07.65" -> 67.65. Dipakai sebagai bukti siaran benar-benar maju. */
+function hmsToSeconds(hms) {
+  const m = /^(\d{2}):(\d{2}):(\d{2}\.\d{2})$/.exec(hms);
+  if (!m) return 0;
+  return Number(m[1]) * 3600 + Number(m[2]) * 60 + parseFloat(m[3]);
+}
+
+/**
+ * Baris progres FFmpeg. Bentuknya berbeda antar versi DAN antar mode:
+ *
+ *   5.1, dan semua versi saat re-encode:
+ *     frame=  190 fps= 25 q=-1.0 Lsize=  125kB time=00:00:07.50 bitrate= 136.4kbits/s speed=1x
+ *   6.1 ke atas, mode copy:
+ *     size=     127kB time=00:00:07.65 bitrate= 135.6kbits/s speed=1.07x
+ *
+ * FFmpeg 6.1 tidak mencetak frame=/fps= pada mode copy — tidak ada encoder video
+ * yang menghitungnya (diuji 2026-09-10, pada -loglevel warning maupun info).
+ * Regex lama mewajibkan keduanya sekaligus, jadi state.stats tidak pernah terisi
+ * di sana: frame 0, bitrate "-", bandwidth dashboard 0, padahal siarannya
+ * mengalir. Karena itu field dibaca satu per satu, dan yang WAJIB hanya time= —
+ * satu-satunya yang ada di semua versi dan semua mode.
+ *
+ * frame/fps bernilai null, bukan 0, kalau tidak dilaporkan: nol berarti "tidak
+ * ada yang terkirim", null berarti "tidak diberitahu".
+ */
+function parseStats(line, previous) {
+  const time = TIME_RE.exec(line);
+  if (!time) return null;
+
+  const frame = FRAME_RE.exec(line);
+  const fps = FPS_RE.exec(line);
+  const bitrate = BITRATE_RE.exec(line);
+  const speed = SPEED_RE.exec(line);
+  const prev = previous || {};
+
+  return {
+    frame: frame ? parseInt(frame[1], 10) : null,
+    fps: fps ? parseFloat(fps[1]) : null,
+    bitrate: bitrate ? bitrate[1] : (prev.bitrate || '-'),
+    time: time[1],
+    timeSeconds: hmsToSeconds(time[1]),
+    speed: speed ? speed[1] : (prev.speed || '-'),
+    updatedAt: Date.now(),
+  };
+}
 
 function handleOutput(streamId, state, chunk) {
   const text = chunk.toString();
@@ -470,16 +549,9 @@ function handleOutput(streamId, state, chunk) {
     if (!line) continue;
 
     // Baris statistik diperbarui terus-menerus; simpan sebagai angka, bukan log.
-    const stats = line.match(STATS_RE);
+    const stats = parseStats(line, state.stats);
     if (stats) {
-      state.stats = {
-        frame: parseInt(stats[1], 10),
-        fps: parseFloat(stats[2]),
-        bitrate: stats[3],
-        time: (line.match(TIME_RE) || [])[1] || state.stats.time,
-        speed: stats[4],
-        updatedAt: Date.now(),
-      };
+      state.stats = stats;
       continue;
     }
 
@@ -826,5 +898,5 @@ module.exports = {
   // liquidsoap sungguhan mustahil di Windows, jadi yang diuji adalah seluruh
   // keputusan di sekitarnya — dan justru di situlah kesalahan bisa lolos tanpa
   // ketahuan sampai siaran benar-benar dijalankan.
-  __test: { isRadioStream, resolveRadioSource, prepareRadioFiles, cleanupRadioFiles },
+  __test: { isRadioStream, resolveRadioSource, prepareRadioFiles, cleanupRadioFiles, parseStats, launch },
 };

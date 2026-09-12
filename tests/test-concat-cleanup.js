@@ -240,7 +240,7 @@ async function main() {
   const live = await until('live', async () => {
     const data = await (await client.req('/api/overview', { headers: { Accept: 'application/json' } })).json();
     const s = data.streams.find((x) => x.id === streamId);
-    return s && s.runtime && s.runtime.stats.frame > 0 ? s : null;
+    return s && s.runtime && s.runtime.stats.timeSeconds > 0 ? s : null;
   });
   check('siaran playlist benar-benar mengalir', Boolean(live), true);
   check('daftar concat ditulis saat siaran dimulai', fs.existsSync(concatFile), true);

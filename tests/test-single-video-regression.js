@@ -139,13 +139,13 @@ async function main() {
   for (;;) {
     const live = await (await req('/api/overview')).json();
     running = live.streams.find((s) => s.id === streamId);
-    if (running && running.runtime && running.runtime.stats.frame > 0) break;
+    if (running && running.runtime && running.runtime.stats.timeSeconds > 0) break;
     if (Date.now() > untilStats) break;
     await new Promise((r) => setTimeout(r, 500));
   }
   check('stream video tunggal live', running.status, 'live');
-  check('siaran benar-benar mengalir', Boolean(running.runtime && running.runtime.stats.frame > 0), true);
-  console.log(`        frame=${running.runtime.stats.frame} bitrate=${running.runtime.stats.bitrate}`);
+  check('siaran benar-benar mengalir', Boolean(running.runtime && running.runtime.stats.timeSeconds > 0), true);
+  console.log(`        time=${running.runtime.stats.time} frame=${running.runtime.stats.frame} bitrate=${running.runtime.stats.bitrate}`);
 
   // Video tunggal tidak boleh membuat berkas concat sama sekali.
   const concatFile = path.join(ROOT, 'storage/tmp', `playlist_${streamId}.txt`);

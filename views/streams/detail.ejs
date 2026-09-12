@@ -389,7 +389,7 @@
       <div class="card-head"><h2>Encoder</h2></div>
       <div class="card-body">
         <dl class="kv">
-          <dt>FPS</dt><dd class="mono" id="stFps"><%= runtime ? runtime.stats.fps : '—' %></dd>
+          <dt>FPS</dt><dd class="mono" id="stFps"><%= (runtime && runtime.stats.fps) || '—' %></dd>
           <dt>Bitrate</dt><dd class="mono" id="stBitrate"><%= runtime ? runtime.stats.bitrate : '—' %></dd>
           <dt>Speed</dt><dd class="mono" id="stSpeed"><%= runtime ? runtime.stats.speed : '—' %></dd>
           <dt>Waktu</dt><dd class="mono" id="stTime"><%= runtime ? runtime.stats.time : '—' %></dd>

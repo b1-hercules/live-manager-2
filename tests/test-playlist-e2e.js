@@ -242,14 +242,14 @@ async function main() {
   for (;;) {
     const live = await (await alice.req('/api/overview', { headers: { Accept: 'application/json' } })).json();
     running = live.streams.find((s) => s.id === streamId);
-    if (running && running.runtime && running.runtime.stats.frame > 0) break;
+    if (running && running.runtime && running.runtime.stats.timeSeconds > 0) break;
     if (Date.now() > untilStats) break;
     await new Promise((r) => setTimeout(r, 500));
   }
   check('stream berstatus live', running.status, 'live');
   check('FFmpeg melaporkan statistik (siaran benar-benar mengalir)',
-    Boolean(running.runtime && running.runtime.stats.frame > 0), true);
-  console.log(`        frame=${running.runtime.stats.frame} fps=${running.runtime.stats.fps} bitrate=${running.runtime.stats.bitrate}`);
+    Boolean(running.runtime && running.runtime.stats.timeSeconds > 0), true);
+  console.log(`        time=${running.runtime.stats.time} frame=${running.runtime.stats.frame} fps=${running.runtime.stats.fps} bitrate=${running.runtime.stats.bitrate}`);
 
   const concatFile = path.join(ROOT, 'storage/tmp', `playlist_${streamId}.txt`);
   check('daftar concat ada selama siaran', fs.existsSync(concatFile), true);
