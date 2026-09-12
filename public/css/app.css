@@ -242,6 +242,11 @@ hr { border: 0; border-top: 1px solid var(--border-soft); margin: 18px 0; }
 .btn:hover { background: var(--surface-3); border-color: #313a4b; text-decoration: none; }
 .btn:active { transform: translateY(1px); }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; pointer-events: none; }
+
+/* Pembungkus tombol yang dinonaktifkan. Aturan di atas mematikan pointer-events
+   pada tombolnya, jadi atribut title di tombol itu sendiri tidak pernah
+   memunculkan tooltip — pembungkus inilah yang menerima hover-nya. */
+.btn-locked { display: inline-flex; cursor: not-allowed; }
 .btn svg { width: 15px; height: 15px; }
 
 .btn-primary { background: var(--accent); border-color: var(--accent); color: #17130a; }
