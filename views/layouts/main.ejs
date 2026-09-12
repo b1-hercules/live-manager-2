@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title><%= typeof title !== 'undefined' ? title + ' — ' + appName : appName %></title>
-  <link rel="stylesheet" href="/assets/css/app.css">
+  <link rel="stylesheet" href="<%= assetUrl('/css/app.css') %>">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23e8b04b'/><circle cx='16' cy='16' r='3.4' fill='%2317130a'/><path d='M22 10a8.5 8.5 0 010 12M10 22a8.5 8.5 0 010-12' stroke='%2317130a' stroke-width='2.3' fill='none' stroke-linecap='round'/></svg>">
   <meta name="csrf-token" content="<%= csrfToken %>">
 </head>
@@ -32,7 +32,7 @@
 </div>
 
 <div class="toast-stack" id="toastStack"></div>
-<script src="/assets/js/app.js"></script>
+<script src="<%= assetUrl('/js/app.js') %>"></script>
 <%- typeof scripts !== 'undefined' ? scripts : '' %>
 </body>
 </html>
