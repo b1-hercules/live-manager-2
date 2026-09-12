@@ -12,7 +12,206 @@ _(kosong — gap yang disepakati sudah dikerjakan)_
 
 ## IN PROGRESS
 
-### Siaran ala radio (musik + gambar + spektrum) — dirancang 2026-09-10
+_(kosong — fitur siaran radio sudah selesai, lihat DONE)_
+
+## DONE
+
+### Liquidsoap ikut diperiksa, dan ketiadaannya kelihatan — 2026-09-12
+
+`services/liquidsoap.js` punya `checkAvailability()` sejak fitur radio dibuat,
+tetapi **nol pemanggil**. `app.js` dan `routes/settings.js` sama-sama memanggil
+`checkAvailability()` milik `services/ffmpeg.js` — nama yang kembar persis, dan
+GitNexus sempat melaporkan kedua berkas itu sebagai pemanggil versi liquidsoap
+(lihat FINDINGS). Akibatnya aplikasi tidak pernah tahu liquidsoap terpasang atau
+tidak, halaman Pengaturan hanya menampilkan FFmpeg, dan pengguna baru menemukan
+masalahnya sebagai siaran radio yang gagal start setelah menunggu ±15 detik.
+
+- `app.js` — `boot()` memeriksa liquidsoap dan menyimpannya di
+  `app.locals.liquidsoapStatus`. Log-nya **warn, bukan error**: ketiadaan
+  liquidsoap hanya mematikan mode radio, siaran video tidak terpengaruh. Nilai
+  awal disetel sebelum boot supaya view yang dirender tanpa `boot()` — tes
+  merender langsung — tidak meledak saat membaca `.ok`.
+- `routes/streams.js` — `radioWarnings()` menerima status itu dan
+  memperingatkan di halaman detail siaran, tempat dua peringatan radio lain
+  sudah tampil. Ini yang paling berguna: penyebabnya terbaca **sebelum** tombol
+  Mulai ditekan, lengkap dengan pesan asli spawn dan jalan keluarnya
+  (`LIQUIDSOAP_PATH`). Status yang belum diperiksa (`undefined`) sengaja tidak
+  memunculkan peringatan, supaya halaman tidak mengarang masalah.
+- `routes/settings.js` + `views/settings.ejs` — kartu Liquidsoap di samping
+  kartu FFmpeg, berikut tombol Cek Ulang (`POST /settings/liquidsoap/check`).
+  Keadaan "tidak ditemukan" memakai `alert-warn`, bukan `alert-error` seperti
+  FFmpeg, dan menyebut sendiri bahwa siaran video tetap jalan.
+- `radioWarnings` diekspor semata untuk bisa diuji langsung.
+
+`tests/test-liquidsoap-status.js` (baru, 27 pemeriksaan) — tanpa database dan
+tanpa server: `db/index.js` disuntik lewat `require.cache` seperti pola
+`test-google-gating.js`, jadi tes ini aman dijalankan selagi aplikasi hidup.
+Dibuktikan **MERAH** dulu di worktree HEAD: 7 pemeriksaan gagal lalu berhenti
+dengan `TypeError: radioWarnings is not a function`. Hijau **27/27** sesudahnya.
+Karena namanya kembar, asersi sengaja mencari `liquidsoapService.checkAvailability(`
+— menyebut modulnya — bukan nama fungsinya saja.
+
+Suite penuh belum dijalankan: container `livemanager` sedang hidup dan penjaga
+`tests/run.js` menolak, tepat seperti yang dirancang. Tiga tes statis lain yang
+menyentuh view ikut dijalankan sendiri dan tetap hijau: `test-asset-version`
+(10), `test-google-gating` (29), `test-hidden-attr` (3).
+
+### Penjaga: tes menolak jalan selagi aplikasi hidup — 2026-09-12
+
+Bukan kekhawatiran teoretis. Pada 2026-09-12 `npm test` dijalankan sambil
+container hidup, prosesnya mati di tengah jalan, dan yang tertinggal di database
+kerja adalah user tes beserta video, tujuan, profil rotasi, stream, dan playlist
+miliknya. Sebabnya pola backup/restore: tes mengembalikan `db/livemanager.db`
+lalu menghapus `-wal`/`-shm`-nya, sementara aplikasi yang memegang berkas itu —
+container lewat volume `./db:/app/db`, atau proses PM2/npm di host — tidak tahu
+isinya berganti di bawahnya. Yang rusak bukan tesnya, melainkan data pengguna.
+
+- `tests/run.js` memeriksa `/health` di port dari `.env` sebelum menjalankan apa
+  pun, dan menolak dengan pesan yang menyebut cara menghentikan untuk kedua cara
+  pemasangan. `--skip-app-check` melewatinya.
+- Probe lewat `/health`, bukan `docker ps`: satu pemeriksaan yang sama menangkap
+  Docker, PM2, maupun `npm start`, dan tidak menuntut docker CLI ada. Bentuk
+  jawabannya ikut diperiksa — bukan hanya status 200 — supaya aplikasi lain yang
+  kebetulan memakai port itu tidak membuat tes menolak jalan.
+- Lokasi kunci runner bisa dialihkan lewat `LM_TEST_LOCK`, dipakai hanya oleh
+  `tests/test-runner-guard.js` yang menjalankan runner di dalam runner: tanpa
+  pengalihan, yang bersarang merebut lalu menghapus kunci milik yang di luar.
+- `tests/test-runner-guard.js` (baru, 26 pemeriksaan).
+
+Suite penuh saat itu: **569 pass, 3 fail** dari 24 berkas. Ketiga kegagalan itu
+pemeriksaan "siaran benar-benar mengalir" di `test-playlist-e2e`,
+`test-single-video-regression`, dan `test-concat-cleanup` — pre-existing, gagal
+sama persis di master tanpa perubahan ini (sebabnya `STATS_RE`, lihat FINDINGS).
+
+### Tombol fitur Google nonaktif saat OAuth belum siap — 2026-09-12
+
+Tombol "Impor dari Drive" di `/videos` selalu bisa diklik, bahkan pada pemasangan
+yang belum pernah menyentuh Google sama sekali. Yang didapat pengguna: modal
+terbuka lalu galat, tanpa petunjuk apa yang kurang atau harus ke mana.
+
+Fitur Google memang opsional, jadi tombolnya tidak boleh dihilangkan begitu saja
+— fiturnya jadi tak pernah ditemukan. Yang benar: dinonaktifkan, alasannya di
+tooltip, dan langkah berikutnya tertulis kasatmata beserta tautannya.
+
+- `services/googleStatus.js` (baru) — satu sumber kebenaran untuk tiga tahap,
+  masing-masing dengan jalan keluarnya: kredensial OAuth belum diisi →
+  Pengaturan; belum ada akun terhubung → Akun; akun ada tapi belum berizin Drive
+  → hubungkan ulang di Akun. Objek yang sama dipakai view dan rute, jadi
+  keterangan di layar dan pesan galat tidak pernah berbeda.
+- **Perubahan perilaku:** rute Drive kini ikut menuntut kredensial OAuth terisi,
+  bukan hanya akun ber-scope Drive. Sebelumnya akun tanpa kredensial lolos
+  pemeriksaan rute lalu gagal belakangan di dalam googleapis.
+- Tooltip menempel di pembungkus `<span class="btn-locked">`, bukan di tombolnya:
+  `.btn:disabled` menyetel `pointer-events: none`, jadi `title` di tombol itu
+  sendiri tidak akan pernah muncul. Keterangannya juga ditulis kasatmata karena
+  tooltip tidak ada di layar sentuh.
+- `tests/test-google-gating.js` (baru, 29 pemeriksaan) — tanpa database maupun
+  server: dependensi `googleStatus` disuntik lewat `require.cache`, kedua view
+  dirender langsung lalu diperiksa disabled, tooltip, keterangan, dan tautannya.
+
+### Penanda versi di URL /assets — 2026-09-12
+
+`express.static` melayani `/assets` dengan `Cache-Control` 7 hari di production,
+sementara layout menulis `/assets/css/app.css` apa adanya. URL yang tidak pernah
+berubah itu membuat browser memegang CSS/JS lama sampai seminggu penuh, termasuk
+setelah image Docker dibangun ulang — perbaikan modal Impor dari Drive (ba3f21d)
+tetap terlihat rusak di browser yang sempat membuka aplikasi sebelumnya, dan
+satu-satunya jalan keluar adalah Ctrl+Shift+R.
+
+- `utils/asset-version.js` (baru) — menempelkan sidik jari isi berkas sebagai
+  `?v=`, dipasang di `app.locals.assetUrl` dan dipakai kedua layout.
+- Sidik jari diambil dari **isi**, bukan waktu ubah: rebuild yang tidak menyentuh
+  aset menghasilkan URL yang sama persis, jadi cache yang masih sah tidak ikut
+  dibuang. Di development dihitung ulang tiap pemanggilan supaya hasil edit
+  langsung kelihatan tanpa restart. Berkas yang tidak ada tetap menghasilkan URL
+  tanpa `?v=`.
+- `tests/test-asset-version.js` (baru) menjaga keduanya: sidik jari benar-benar
+  mengikuti isi berkas, dan tidak ada view yang menulis URL `/assets` mentah
+  sehingga melewati helper itu.
+
+### Bersih-bersih repo — 2026-09-11
+
+Dua berkas yang menggantung di working tree sejak lama, keduanya bukan kode
+(`detect-changes`: 2 berkas tersentuh, nol simbol terindeks).
+
+- `.gitignore` — `mise.toml` dan `.mise.toml` ikut bagian "konfigurasi lokal,
+  tidak ikut repo" bersama `.claude/` dan `.gitnexus/`. Pin versi runtime itu
+  setelan mesin masing-masing; men-commit `node = "24"` akan bertentangan dengan
+  README yang menyebut "diuji pada Node 22".
+- `package-lock.json` — `"hasInstallScript": true` pada paket root, ditulis npm 11
+  karena `package.json` punya `postinstall` (`scripts/ensure-native.js`).
+  Perubahan sah dari npm, bukan sisa percobaan.
+
+Ikut dibereskan di luar commit: worktree
+`.claude/worktrees/panduan-setup-dan-fix-modal` dihapus (bersih, nol commit unik),
+serta branch lokal `radio-langkah-6` dan `worktree-panduan-setup-dan-fix-modal`
+yang keduanya sudah masuk `origin/master`.
+
+### Skrip pemasang `install.sh` (Docker atau npm + PM2) — 2026-09-10
+
+Diminta user: satu skrip `.sh` untuk memasang lewat Docker atau npm, tinggal
+pilih. Sebelumnya belum ada (0 berkas `.sh` di repo).
+
+- `install.sh` (baru, root proyek) — menu 1) Docker 2) npm + PM2, atau langsung
+  `./install.sh docker|npm`; `-y` menjawab "ya" untuk semua pertanyaan.
+  Rancangan yang diasumsikan (belum dikonfirmasi user): paket sistem hanya lewat
+  apt (Ubuntu/Debian); setiap `sudo` ditanyakan dulu; mode npm memakai PM2
+  (menolak PM2 → `npm start` di terminal).
+  - `.env`: placeholder `ganti-dengan-…` dari `.env.example` **diganti**.
+    `config/index.js` maupun `${VAR:?}` di `docker-compose.yml` hanya memeriksa
+    "tidak kosong", jadi placeholder itu diterima apa adanya sebagai kunci.
+    Kunci yang sudah terisi tidak pernah diganti.
+  - Docker: pasang `docker.io` + `docker-compose-v2` (atau `docker-compose-plugin`
+    kalau `docker-ce` terpasang), `sudo docker` untuk sesi itu kalau user belum
+    punya hak ke docker.sock, lalu `compose up -d --build`.
+  - npm: Node ≥ 18 (peringatan kalau bukan 22, tawarkan build tools kalau > 22),
+    FFmpeg wajib, liquidsoap opsional, peringatan FFmpeg ≥ 6.1 (lihat FINDINGS
+    soal `STATS_RE`), chown sisa berkas root dari Docker, `npm install`, PM2
+    start/restart + save + startup.
+  - Kedua mode menolak jalan kalau port sudah dipegang cara yang lain (database
+    bersama), lalu menunggu `/health` menjawab.
+- Tes baru `tests/test-install-sh.js`: skrip dijalankan terhadap stub (sudo,
+  apt-get, docker, npm, pm2, ss, curl, ...) dengan PATH dibatasi, jadi tidak ada
+  perintah sungguhan yang tersentuh. 53/53. **Dibuktikan bisa merah** lewat
+  `INSTALL_SH=` pada dua salinan rusak: tanpa penggantian placeholder → 3 gagal
+  (tepat asersi `.env`); tanpa cek port → 3 gagal (tepat asersi port). Satu
+  kegagalan awal ternyata bug di tes: `includes('pm2 start')` ikut cocok dengan
+  `pm2 startup`.
+- README: "Cara tercepat: `install.sh`" di Instalasi, tautan di langkah 1 Mulai
+  cepat, tabel Perintah, Struktur proyek.
+
+Belum dijalankan sungguhan di mesin mana pun (memasang paket butuh sudo), dan
+`shellcheck` tidak tersedia di mesin ini — pemeriksaan statisnya hanya `bash -n`.
+
+### Panduan urutan persiapan + modal Drive yang tak bisa ditutup — 2026-09-10
+
+Diminta user: README belum menjelaskan cara menjalankan dengan Docker, cara
+menghentikan `npm start`, dan urutan persiapan setelah masuk dashboard ("OAuth
+dulu atau video dulu?"). Dilaporkan sekaligus: di `/videos` langsung muncul
+modal "Impor dari Google Drive" dan tombol Tutup-nya tidak berfungsi.
+
+- `public/css/app.css` — `[hidden] { display: none !important; }`. Penyebabnya di
+  FINDINGS. Ikut membereskan tombol **Batal** unggahan (`.btn`, inline-flex) yang
+  selama ini selalu terlihat.
+- Tes baru `tests/test-hidden-attr.js` (statis, tanpa browser): memindai
+  `views/` untuk elemen ber-`hidden` yang kelasnya menyetel `display`.
+  **Dibuktikan merah dulu** — 2 pass, 1 fail — lalu hijau 3/3 setelah aturan
+  dipasang.
+- `README.md` — bagian baru **Mulai cepat: urutan persiapan** (9 langkah; mana
+  yang wajib dan mana yang khusus fitur Google), **Menghentikan aplikasi**,
+  Docker ditulis ulang (pasang plugin compose, pindah dari `npm start`, perintah
+  sehari-hari, kepemilikan berkas root), **Membuka dashboard dari VPS** (SSH
+  tunnel, batasan redirect URI Google), dan entri pemecahan masalah baru.
+- `views/accounts/index.ejs` + README — petunjuk Google Cloud kini menyebut
+  **Google Drive API**, bukan hanya YouTube Data API v3.
+
+Tidak ada fungsi JS yang disentuh (hanya CSS, template, dan dokumentasi), jadi
+tidak ada impact analysis per simbol. Urutan checklist di dashboard sengaja tidak
+diubah — README menjelaskan bahwa kotak itu checklist, bukan urutan. Belum
+dilihat di browser sungguhan karena mesin ini tidak punya browser; buktinya tes
+statis di atas plus aturan kaskade CSS.
+
+### Siaran ala radio (musik + gambar + spektrum) — dirancang & selesai 2026-09-10
 
 Diminta user: siaran dari daftar musik, bukan berkas video jadi, dengan latar
 gambar bergantian dan overlay spektrum audio yang **letak dan ukurannya bisa
@@ -281,72 +480,6 @@ itu saja karena tesnya memakai `pgrep`; aplikasinya sendiri tidak butuh.)
 disk**. `docker image inspect` melaporkan 432,1 MB versus 411,2 MB (+20,9 MB) —
 kemungkinan ukuran terkompresi, belum dipastikan. Angka mutlak 1,9 GB membengkak
 karena `COPY . .` tanpa `.dockerignore` (lihat FINDINGS), bukan karena liquidsoap.
-
-## DONE
-
-### Skrip pemasang `install.sh` (Docker atau npm + PM2) — 2026-09-10
-
-Diminta user: satu skrip `.sh` untuk memasang lewat Docker atau npm, tinggal
-pilih. Sebelumnya belum ada (0 berkas `.sh` di repo).
-
-- `install.sh` (baru, root proyek) — menu 1) Docker 2) npm + PM2, atau langsung
-  `./install.sh docker|npm`; `-y` menjawab "ya" untuk semua pertanyaan.
-  Rancangan yang diasumsikan (belum dikonfirmasi user): paket sistem hanya lewat
-  apt (Ubuntu/Debian); setiap `sudo` ditanyakan dulu; mode npm memakai PM2
-  (menolak PM2 → `npm start` di terminal).
-  - `.env`: placeholder `ganti-dengan-…` dari `.env.example` **diganti**.
-    `config/index.js` maupun `${VAR:?}` di `docker-compose.yml` hanya memeriksa
-    "tidak kosong", jadi placeholder itu diterima apa adanya sebagai kunci.
-    Kunci yang sudah terisi tidak pernah diganti.
-  - Docker: pasang `docker.io` + `docker-compose-v2` (atau `docker-compose-plugin`
-    kalau `docker-ce` terpasang), `sudo docker` untuk sesi itu kalau user belum
-    punya hak ke docker.sock, lalu `compose up -d --build`.
-  - npm: Node ≥ 18 (peringatan kalau bukan 22, tawarkan build tools kalau > 22),
-    FFmpeg wajib, liquidsoap opsional, peringatan FFmpeg ≥ 6.1 (lihat FINDINGS
-    soal `STATS_RE`), chown sisa berkas root dari Docker, `npm install`, PM2
-    start/restart + save + startup.
-  - Kedua mode menolak jalan kalau port sudah dipegang cara yang lain (database
-    bersama), lalu menunggu `/health` menjawab.
-- Tes baru `tests/test-install-sh.js`: skrip dijalankan terhadap stub (sudo,
-  apt-get, docker, npm, pm2, ss, curl, ...) dengan PATH dibatasi, jadi tidak ada
-  perintah sungguhan yang tersentuh. 53/53. **Dibuktikan bisa merah** lewat
-  `INSTALL_SH=` pada dua salinan rusak: tanpa penggantian placeholder → 3 gagal
-  (tepat asersi `.env`); tanpa cek port → 3 gagal (tepat asersi port). Satu
-  kegagalan awal ternyata bug di tes: `includes('pm2 start')` ikut cocok dengan
-  `pm2 startup`.
-- README: "Cara tercepat: `install.sh`" di Instalasi, tautan di langkah 1 Mulai
-  cepat, tabel Perintah, Struktur proyek.
-
-Belum dijalankan sungguhan di mesin mana pun (memasang paket butuh sudo), dan
-`shellcheck` tidak tersedia di mesin ini — pemeriksaan statisnya hanya `bash -n`.
-
-### Panduan urutan persiapan + modal Drive yang tak bisa ditutup — 2026-09-10
-
-Diminta user: README belum menjelaskan cara menjalankan dengan Docker, cara
-menghentikan `npm start`, dan urutan persiapan setelah masuk dashboard ("OAuth
-dulu atau video dulu?"). Dilaporkan sekaligus: di `/videos` langsung muncul
-modal "Impor dari Google Drive" dan tombol Tutup-nya tidak berfungsi.
-
-- `public/css/app.css` — `[hidden] { display: none !important; }`. Penyebabnya di
-  FINDINGS. Ikut membereskan tombol **Batal** unggahan (`.btn`, inline-flex) yang
-  selama ini selalu terlihat.
-- Tes baru `tests/test-hidden-attr.js` (statis, tanpa browser): memindai
-  `views/` untuk elemen ber-`hidden` yang kelasnya menyetel `display`.
-  **Dibuktikan merah dulu** — 2 pass, 1 fail — lalu hijau 3/3 setelah aturan
-  dipasang.
-- `README.md` — bagian baru **Mulai cepat: urutan persiapan** (9 langkah; mana
-  yang wajib dan mana yang khusus fitur Google), **Menghentikan aplikasi**,
-  Docker ditulis ulang (pasang plugin compose, pindah dari `npm start`, perintah
-  sehari-hari, kepemilikan berkas root), **Membuka dashboard dari VPS** (SSH
-  tunnel, batasan redirect URI Google), dan entri pemecahan masalah baru.
-- `views/accounts/index.ejs` + README — petunjuk Google Cloud kini menyebut
-  **Google Drive API**, bukan hanya YouTube Data API v3.
-
-Tidak ada fungsi JS yang disentuh (hanya CSS, template, dan dokumentasi), jadi
-tidak ada impact analysis per simbol. Urutan checklist di dashboard sengaja tidak
-diubah — README menjelaskan bahwa kotak itu checklist, bukan urutan. Belum
-dilihat di browser sungguhan karena mesin ini tidak punya browser; buktinya tes
-statis di atas plus aturan kaskade CSS.
 
 ### Lapisan media: berkas musik masuk ke daftar yang sama — 2026-09-09
 
@@ -773,7 +906,7 @@ Hasil investigasi gap-analysis (GitNexus query/FTS lagi degraded di mesin ini �
 - **Batang `showfreqs` jauh lebih pendek dari kotaknya** (2026-09-10, diukur): dengan `ascale=cbrt` dan derau pink a=0.5, batangnya hanya mengisi pita 20px paling bawah dari kotak setinggi 120px. Akibatnya menguji "apakah spektrum tergambar" dengan merata-ratakan seluruh kotak MENYESATKAN — selisihnya cuma 0,9 luma dan terbaca seperti gagal, padahal pada pita yang benar selisihnya 40 luma (115,4 saat berbunyi versus 75,3 saat senyap). Ukur luma puncak antar pita, jangan rata-rata kotak. Untuk UI: kotak spektrum yang tinggi akan tampak banyak kosong pada musik yang tidak keras — itu perilaku `showfreqs`, bukan bug.
 - **`test-concat-cleanup` bisa gagal karena mesin berat, bukan karena kode** (2026-09-10): asersi "siaran playlist benar-benar mengalir" menunggu `stats.frame > 0` dari sink RTMP sungguhan dengan batas waktu. Saat mesin sibuk ia gagal, dan berkas itu memakan **47 detik**; saat normal lolos dalam **22 detik**. Cara memastikannya sebelum menyalahkan perubahan sendiri: jalankan berkas itu sendirian (`npm test -- concat`) dan bandingkan durasinya dengan run yang sehat. Durasi yang membengkak dua kali lipat adalah tandanya.
 - **Jangan salurkan `npm test` lewat `tail` saat dijalankan di latar belakang** (2026-09-10): keluaran yang tersimpan hanya ringkasannya, dan detail asersi yang gagal ikut hilang — persis yang dibutuhkan untuk mendiagnosis. Simpan keluaran utuh, potong saat membacanya.
-- **`liquidsoap.checkAvailability()` tidak pernah dipanggil; GitNexus bilang sebaliknya** (2026-09-10, diverifikasi dengan grep): `context` untuk simbol ini melaporkan pemanggil `app.js` `boot` dan `routes/settings.js`, padahal kedua berkas itu memanggil `ffmpegService.checkAvailability()` — fungsi bernama sama di `services/ffmpeg.js`. Index mengatribusikan panggilan ke KEDUA simbol yang namanya kembar. Akibat nyatanya: aplikasi tidak pernah memeriksa ketersediaan liquidsoap, dan halaman Pengaturan hanya menampilkan status FFmpeg. Pelajaran umum: untuk nama yang kembar lintas modul, jawaban `context`/`impact` wajib dicek silang dengan grep pada pola `<modul>.<nama>(`.
+- **`liquidsoap.checkAvailability()` tidak pernah dipanggil; GitNexus bilang sebaliknya** (2026-09-10, diverifikasi dengan grep): `context` untuk simbol ini melaporkan pemanggil `app.js` `boot` dan `routes/settings.js`, padahal kedua berkas itu memanggil `ffmpegService.checkAvailability()` — fungsi bernama sama di `services/ffmpeg.js`. Index mengatribusikan panggilan ke KEDUA simbol yang namanya kembar. Akibat nyatanya: aplikasi tidak pernah memeriksa ketersediaan liquidsoap, dan halaman Pengaturan hanya menampilkan status FFmpeg. Pelajaran umum: untuk nama yang kembar lintas modul, jawaban `context`/`impact` wajib dicek silang dengan grep pada pola `<modul>.<nama>(`. **Diperbaiki 2026-09-12** (lihat DONE). Impact ulang atas nama kembar itu masih memberi `UNKNOWN` di tingkat atas, lalu memecahnya jadi dua: `services/ffmpeg.js` 13 simbol LOW dan `services/liquidsoap.js` 9 simbol LOW — angka kedua itu yang membuktikan pemanggilnya kini benar-benar ada.
 - **Mesin kerja pindah ke Ubuntu 24.04 (2026-09-10)**: `better-sqlite3@11.10.0` tidak punya prebuilt untuk Node 24 (`No prebuilt binaries found (target=24.21.0)`) dan jatuh ke kompilasi yang butuh `make`. Dipakai Node 22 lewat `mise exec node@22 -- ...` — sama dengan base image `node:22-bookworm-slim`, jadi tes berjalan di runtime produksi. Versi liquidsoap berbeda di tiap tempat: Ubuntu 24.04 **2.2.4**, Debian bookworm (image Docker) **2.1.3**, trixie **2.3.2**; FFmpeg 6.1 di host versus 5.1 di image. Lulus di host tidak membuktikan image.
 - **`spawn()` TIDAK melempar untuk binary yang tidak ada** (2026-09-10, diuji di Node 22.23.2 dan 24.21.0, hasil identik): kembaliannya objek dengan `pid === undefined`, lalu event `error` (`ENOENT`), disusul `close` dengan kode **-2**. Akibatnya `try/catch` di sekitar `liquidsoap.spawnEngine()` dalam `launch()` tidak pernah menangkap "liquidsoap tidak terpasang": FFmpeg tetap dijalankan, status sempat `live`, lalu handler `close` liquidsoap mematikan FFmpeg dan siaran jatuh ke auto-restart berulang alih-alih gagal dengan pesan jelas. Dihitung dari konstanta `streamManager.js`: jeda 5+10+20+40+80+120×5 = **±12,6 menit** bolak-balik (uptime tiap putaran tak pernah melewati `STABLE_AFTER_MS` 60 dtk, jadi hitungan tidak di-reset), berakhir "Gagal setelah 10 percobaan restart"; tanpa auto-restart pesannya "FFmpeg berhenti (kode null)" — menyalahkan FFmpeg. Penyebab sebenarnya hanya ada di satu baris log "Proses liquidsoap error: spawn liquidsoap ENOENT". Ketiga calon titik perbaikan (`launch`, `resolveRadioSource`, `prepareRadioFiles`) HIGH lewat proses `start`/`startDueStreams`/`timer`. Pola `try { spawn } catch` yang sama juga ada di jalur FFmpeg (`ffmpeg.spawnStream`), perilaku lama yang belum disentuh.
 - **Liquidsoap sungguhan butuh ±15 detik sebelum harbor terbuka, dan `-reconnect` TIDAK menolong koneksi pertama** (2026-09-10, diukur di Ubuntu 24.04, liquidsoap 2.2.4, FFmpeg 6.1): "Standard library loaded in 13.93 seconds", harbor terbuka pada 14,8 dtk — sama pada putaran kedua (13,44 dtk; tidak ada cache). FFmpeg dengan flag persis `buildRadioArgs()` (`-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2`) terhadap port yang belum dibuka: **gagal dalam 213 ms**, "Connection refused". Menambah `-reconnect_on_network_error 1` dengan `delay_max 2`: menyerah dalam 1,5 dtk. Dengan `delay_max 16`: mencoba ulang pada +3/+7/+15 dtk dan berhasil, tetapi baru tersambung ±9 dtk setelah harbor siap, dan `delay_max` itu ikut mengubah perilaku sambung-ulang di tengah siaran. Akibatnya bagi `launch()` — yang menjalankan FFmpeg seketika setelah liquidsoap dengan anggapan "-reconnect membuat ia mencoba lagi sendiri" — FFmpeg mati sebelum harbor siap, `handleExit` membunuh liquidsoap, dan restart memulai keduanya dari nol; harbor tidak pernah sempat siap. **Disimpulkan dari dua pengukuran di atas plus pembacaan kode, belum diamati lewat aplikasi.** Tes lama tidak menangkapnya karena harbor tiruannya sudah mendengarkan sebelum FFmpeg jalan. Instalasi lama selamat karena liquidsoap hidup terus sebagai layanan terpisah dan hanya FFmpeg yang diulang.
@@ -786,6 +919,6 @@ Hasil investigasi gap-analysis (GitNexus query/FTS lagi degraded di mesin ini �
 - **FFmpeg 5.1 (image Docker) MASIH mencetak `frame=` pada mode copy** (2026-09-10, argumen persis aplikasi): `frame=  190 fps= 25 q=-1.0 Lsize=     125kB time=00:00:07.50 bitrate= 136.4kbits/s speed=   1x`. Jadi masalah `STATS_RE` hanya mengenai instalasi bare-metal dengan FFmpeg ≥6.1, bukan image Docker.
 - **`COPY . .` menimpa `node_modules` hasil `npm install` di image** (2026-09-10, diuji): `nodemon` — devDependency — ada di image padahal `npm install --omit=dev`. (Hash `better_sqlite3.node` yang sama dengan host ternyata BUKAN bukti, meski sempat dipakai begitu: setelah `.dockerignore` dipasang pun hash di image tetap `d7d9272b12d11c1d`, karena host dan image sama-sama mengunduh prebuilt Node 22 linux-x64 yang identik.) Repo tidak punya `.dockerignore`, sehingga ikut tersalin: `node_modules` host (147 MB), `.gitnexus` (57 MB), `.git`, `.claude/`, dan `db/livemanager.db` (database kerja, berisi token terenkripsi) — begitu pula `.env` kalau ada di mesin build. Konsekuensi yang disimpulkan (belum diuji): image yang dibangun dari host Windows akan membawa binary `better-sqlite3` win32 ke container Linux. Masalah lama; Dockerfile di HEAD punya `COPY . .` yang sama. **Diperbaiki dengan `.dockerignore`** atas keputusan user: konteks build turun dari ±200 MB jadi 1,0 MB, image 1,67 GB (dari 1,91 GB); `.git`, `.gitnexus`, `.claude`, dan database kerja tidak lagi ada di image, `nodemon` hilang (node_modules kini hasil `npm install --omit=dev` image sendiri), better-sqlite3 tetap termuat, dan uji asap radio di container tetap lulus.
 - **Atribut `hidden` kalah oleh kelas yang menyetel `display`** (2026-09-10, dilaporkan user): `display: none` untuk `[hidden]` hanya ada di stylesheet user-agent, dan aturan penulis mana pun mengalahkannya. `#driveModal` membawa `hidden`, tetapi `.modal-backdrop { display: grid }` — jadi modal Impor dari Drive tampil sejak `/videos` dibuka, isinya hanya kolom pencarian (daftarnya baru dimuat saat tombol Impor ditekan), dan `close()` yang cuma menyetel `modal.hidden = true` tidak mengubah tampilan sama sekali. `#uploadCancel` (`.btn`, inline-flex) kena hal yang sama: tombol Batal unggahan selalu terlihat. Diperbaiki dengan `[hidden] { display: none !important; }`; `!important` perlu karena `[hidden]` dan `.btn` sama spesifisitasnya (0,1,0), sehingga tanpa itu urutan di berkas yang menentukan. Mesin ini tidak punya browser, jadi penjaganya tes statis `tests/test-hidden-attr.js`.
-- **Paket `docker.io` Ubuntu tidak membawa `docker compose`** (2026-09-10): Docker 29.1.3 dari paket `docker.io` menjawab `docker compose version` dengan `docker: unknown command: docker compose`. Plugin-nya paket terpisah: `docker-compose-v2` (Ubuntu universe, kandidat 2.40.3), atau `docker-compose-plugin` kalau Docker dipasang dari repo docker.com. Perintah `docker compose up -d` di README lama gagal apa adanya di mesin ini. Belum dipasang (butuh sudo).
+- **Paket `docker.io` Ubuntu tidak membawa `docker compose`** (2026-09-10): Docker 29.1.3 dari paket `docker.io` menjawab `docker compose version` dengan `docker: unknown command: docker compose`. Plugin-nya paket terpisah: `docker-compose-v2` (Ubuntu universe, kandidat 2.40.3), atau `docker-compose-plugin` kalau Docker dipasang dari repo docker.com. Perintah `docker compose up -d` di README lama gagal apa adanya di mesin ini. **Sudah dipasang 2026-09-12**: `docker compose version` menjawab `2.40.3+ds1-0ubuntu1~24.04.1`.
 - **Google menolak redirect URI berupa IP atau non-HTTPS, kecuali localhost** (2026-09-10, dari dokumentasi OAuth 2.0 web server Google, bagian *Redirect URI validation*): "Hosts cannot be raw IP addresses. Localhost IP addresses are exempted from this rule." dan "Redirect URIs must use the HTTPS scheme … Localhost URIs … are exempt". Akibatnya dashboard yang dibuka lewat `http://IP-VPS:7575` bisa dipakai menyiarkan, tetapi **tidak bisa** menghubungkan channel. Tanpa domain: SSH tunnel (`ssh -L 7575:localhost:7575 …`) dengan `APP_URL=http://localhost:7575`. Dengan domain: Nginx + HTTPS.
 - **Impor Drive butuh Google Drive API aktif di project Google Cloud, bukan hanya scope-nya** (2026-09-10, dari pembacaan kode): `services/drive.js` memanggil Drive API v3, tetapi README dan petunjuk di halaman Akun hanya menyuruh mengaktifkan YouTube Data API v3. Scope `drive.readonly` diberikan saat menghubungkan channel, namun panggilan pertama tetap ditolak kalau API-nya tidak diaktifkan di project. Kedua petunjuk kini menyebut Google Drive API.

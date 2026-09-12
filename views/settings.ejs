@@ -154,6 +154,38 @@
     </div>
 
     <div class="card">
+      <div class="card-head"><h2>Liquidsoap</h2></div>
+      <div class="card-body">
+        <% if (liquidsoapStatus.ok) { %>
+          <div class="alert alert-success" style="margin:0">
+            <span class="alert-icon"><%- include('partials/icon', { name: 'check' }) %></span>
+            <div>
+              <strong>Terdeteksi</strong>
+              <div class="text-xs mono mt-1" style="opacity:.85"><%= liquidsoapStatus.version %></div>
+              <div class="text-xs mono" style="opacity:.7"><%= liquidsoapStatus.path %></div>
+            </div>
+          </div>
+        <% } else { %>
+          <div class="alert alert-warn" style="margin:0">
+            <span class="alert-icon"><%- include('partials/icon', { name: 'alert' }) %></span>
+            <div>
+              <strong>Tidak ditemukan</strong>
+              <div class="text-xs mt-1"><%= liquidsoapStatus.error || '' %></div>
+              <div class="text-xs mt-1">Hanya dipakai siaran radio (musik + gambar). Siaran video tetap jalan.</div>
+              <div class="text-xs mt-1">Pasang <code>liquidsoap</code>, atau set <code>LIQUIDSOAP_PATH</code> di <code>.env</code>.</div>
+            </div>
+          </div>
+        <% } %>
+        <form method="post" action="/settings/liquidsoap/check" class="mt-2">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn-block btn-sm" type="submit">
+            <%- include('partials/icon', { name: 'refresh' }) %> Cek Ulang
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
       <div class="card-head"><h2>Lingkungan</h2></div>
       <div class="card-body">
         <dl class="kv">

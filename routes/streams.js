@@ -117,9 +117,14 @@ router.post('/', (req, res) => {
  * kurang rapi — jadi lebih baik terlihat di halaman detail daripada muncul
  * sebagai pesan error setelah tombol Mulai ditekan.
  */
-function radioWarnings(isRadio, items, backgrounds) {
+function radioWarnings(isRadio, items, backgrounds, liquidsoapStatus) {
   if (!isRadio) return null;
   const warnings = [];
+  // Tanpa liquidsoap siaran radio gagal saat start, bukan saat disimpan. Lebih
+  // baik dikatakan di sini daripada dibiarkan jadi status error setelah nunggu.
+  if (liquidsoapStatus && !liquidsoapStatus.ok) {
+    warnings.push(`Liquidsoap belum terpasang di server (${liquidsoapStatus.error}). Siaran radio tidak akan bisa dimulai — pasang liquidsoap atau isi LIQUIDSOAP_PATH di .env.`);
+  }
   if (!items.length) warnings.push('Playlist musiknya belum berisi lagu.');
   if (!backgrounds.length) warnings.push('Siaran radio wajib punya minimal satu gambar latar. Unggah di bawah.');
   return warnings;
@@ -160,7 +165,7 @@ router.get('/:id', (req, res) => {
     playlistItems,
     isRadio,
     backgrounds,
-    warnings: radioWarnings(isRadio, playlistItems, backgrounds)
+    warnings: radioWarnings(isRadio, playlistItems, backgrounds, req.app.locals.liquidsoapStatus)
       || (stream.playlist_id
         ? ffmpeg.playlistWarnings(stream, playlistItems)
         : (video ? ffmpeg.compatibilityWarnings(stream, video) : ['Stream ini belum punya video sumber.'])),
@@ -359,3 +364,6 @@ router.post('/:id/rotation/detect', async (req, res) => {
 });
 
 module.exports = router;
+// Diekspor hanya untuk diuji langsung: peringatan radio adalah satu-satunya
+// tempat ketiadaan liquidsoap sampai ke pengguna sebelum tombol Mulai ditekan.
+module.exports.radioWarnings = radioWarnings;
