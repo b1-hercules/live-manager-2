@@ -97,7 +97,18 @@ async function main() {
 
   server = spawn(process.execPath, [path.join(__dirname, 'boot-drive.js')], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(PORT), NODE_ENV: 'development', DRIVE_FIXTURES: JSON.stringify(fixtures) },
+    // Kredensial OAuth lewat env var, bukan tabel settings: google_client_secret
+    // disimpan terenkripsi, dan googleCredentials() memang mendahulukan env.
+    // Tanpa ini rute Drive berhenti di pemeriksaan kredensial (services/googleStatus.js)
+    // sebelum sempat memeriksa izin akun — yang justru diuji di sini.
+    env: {
+      ...process.env,
+      PORT: String(PORT),
+      NODE_ENV: 'development',
+      DRIVE_FIXTURES: JSON.stringify(fixtures),
+      GOOGLE_CLIENT_ID: 'uji-client-id',
+      GOOGLE_CLIENT_SECRET: 'uji-client-secret',
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stderr.on('data', (d) => {

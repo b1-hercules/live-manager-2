@@ -9,6 +9,7 @@ const chunkUpload = require('../services/chunkUpload');
 const videoIngest = require('../services/videoIngest');
 const videoImport = require('../services/videoImport');
 const drive = require('../services/drive');
+const googleStatus = require('../services/googleStatus');
 const { uploadVideo, verifyMediaContent, handleUploadError } = require('../middleware/upload');
 const csrf = require('../middleware/csrf');
 const { requireAuth } = require('../middleware/auth');
@@ -33,6 +34,9 @@ router.get('/', (req, res) => {
     // Ukuran disk mencakup keduanya: musik memakan ruang sama nyatanya.
     totalSize: videoModel.totalSize(req.user.id),
     maxUploadMb: Math.round(config.maxUploadBytes / 1024 / 1024),
+    // Tombol "Impor dari Drive" dinonaktifkan sampai OAuth siap, lengkap dengan
+    // alasan dan langkah berikutnya. Lihat services/googleStatus.js.
+    driveImport: googleStatus.driveImport(req.user.id),
     formatBytes,
     formatDuration,
   });
@@ -159,6 +163,16 @@ router.delete('/upload/:id', (req, res) => {
  * dipakai mengimpor sampai dihubungkan ulang.
  */
 function pickDriveAccount(req) {
+  // Pesannya diambil dari googleStatus, sumber yang sama dengan keterangan di
+  // tombol yang dinonaktifkan — supaya yang dibaca di layar dan yang muncul
+  // saat permintaan ditolak tidak pernah berbeda.
+  const status = googleStatus.driveImport(req.user.id);
+  if (!status.ready) {
+    const err = new Error(googleStatus.message(status));
+    err.status = 400;
+    throw err;
+  }
+
   const usable = accountModel.listByUser(req.user.id, 'youtube').filter(drive.hasAccess);
   const wanted = req.query.account || req.body.account;
   const account = wanted
@@ -166,12 +180,7 @@ function pickDriveAccount(req) {
     : usable[0];
 
   if (!account) {
-    const total = accountModel.listByUser(req.user.id, 'youtube').length;
-    const err = new Error(
-      total
-        ? 'Akun Google yang terhubung belum memberi izin baca Drive. Hubungkan ulang akunnya di halaman Akun.'
-        : 'Belum ada akun Google yang terhubung. Hubungkan dulu di halaman Akun.'
-    );
+    const err = new Error('Akun Google yang diminta tidak ada atau belum memberi izin baca Drive.');
     err.status = 400;
     throw err;
   }

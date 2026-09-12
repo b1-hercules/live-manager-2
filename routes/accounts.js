@@ -4,6 +4,7 @@ const express = require('express');
 const config = require('../config');
 const accountModel = require('../models/account');
 const settings = require('../models/settings');
+const googleStatus = require('../services/googleStatus');
 const youtube = require('../services/youtube');
 const apiHealth = require('../services/apiHealth');
 const { requireAuth } = require('../middleware/auth');
@@ -24,6 +25,7 @@ router.get('/', (req, res) => {
     title: 'Akun Terhubung',
     accounts: list,
     hasCredentials: settings.hasGoogleCredentials(),
+    connectStatus: googleStatus.youtubeConnect(),
     redirectUri: config.googleRedirectUri,
     quotaCost: accountModel.QUOTA_COST,
   });

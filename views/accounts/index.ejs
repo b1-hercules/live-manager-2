@@ -23,9 +23,14 @@
         <h2>Channel Terhubung</h2>
         <form method="post" action="/accounts/youtube/connect">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <button class="btn btn-primary btn-sm" type="submit" <%= hasCredentials ? '' : 'disabled' %>>
-            <%- include('../partials/icon', { name: 'link' }) %> Hubungkan Channel
-          </button>
+          <%# Pembungkusnya yang membawa tooltip: .btn:disabled menyetel
+              pointer-events: none, jadi title di tombol tidak akan muncul. %>
+          <span class="<%= connectStatus.ready ? '' : 'btn-locked' %>"
+                title="<%= connectStatus.ready ? '' : connectStatus.reason + ' ' + connectStatus.next %>">
+            <button class="btn btn-primary btn-sm" type="submit" <%= connectStatus.ready ? '' : 'disabled' %>>
+              <%- include('../partials/icon', { name: 'link' }) %> Hubungkan Channel
+            </button>
+          </span>
         </form>
       </div>
 

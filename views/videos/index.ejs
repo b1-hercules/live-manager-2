@@ -40,9 +40,22 @@
         </button>
         <button class="btn btn-ghost btn-sm" type="button" id="uploadCancel" hidden>Batal</button>
         <% if (!isAudio) { %>
-          <button class="btn btn-sm" type="button" id="driveBtn">
-            <%- include('../partials/icon', { name: 'link' }) %> Impor dari Drive
-          </button>
+          <% if (driveImport.ready) { %>
+            <button class="btn btn-sm" type="button" id="driveBtn">
+              <%- include('../partials/icon', { name: 'link' }) %> Impor dari Drive
+            </button>
+          <% } else { %>
+            <%# Tooltip menempel di pembungkus, bukan di tombolnya: .btn:disabled
+                menyetel pointer-events: none, jadi title di tombol itu sendiri
+                tidak pernah muncul. Keterangan yang sama juga ditulis kasatmata
+                di bawah, karena tooltip tidak ada di layar sentuh. %>
+            <span class="btn-locked" title="<%= driveImport.reason %> <%= driveImport.next %>">
+              <button class="btn btn-sm" type="button" id="driveBtn" disabled
+                      aria-describedby="driveLockNote">
+                <%- include('../partials/icon', { name: 'link' }) %> Impor dari Drive
+              </button>
+            </span>
+          <% } %>
         <% } %>
         <span class="text-xs text-mute" id="uploadNote">
           <% if (isAudio) { %>
@@ -52,6 +65,14 @@
           <% } %>
         </span>
       </div>
+      <% if (!isAudio && !driveImport.ready) { %>
+        <div class="hint" id="driveLockNote">
+          <strong>Impor dari Drive belum bisa dipakai.</strong>
+          <%= driveImport.reason %> <%= driveImport.next %>
+          <a href="<%= driveImport.href %>"><%= driveImport.linkLabel %> →</a>
+          Unggah dari komputer tetap jalan tanpa Google.
+        </div>
+      <% } %>
       <div id="uploadProgress" class="mt-1" hidden>
         <div class="meter ok"><span id="uploadBar" style="width:0%"></span></div>
       </div>
