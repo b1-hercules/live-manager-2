@@ -393,6 +393,36 @@ function launch(streamId, args, destinations, { manual, liq = null }) {
     return { ok: false, error: err.message };
   }
 
+  // spawn() TIDAK melempar untuk binary yang tidak ada — diuji di Node 22.23.2
+  // dan 24.21.0, hasilnya sama: kembaliannya objek dengan pid undefined, lalu
+  // event "error" (ENOENT), disusul "close" dengan kode -2. Artinya catch di
+  // atas tidak pernah jalan untuk "FFmpeg tidak terpasang". Tanpa penjagaan ini
+  // siaran sempat berstatus live tanpa pid, lalu handleExit memutarnya ke
+  // auto-restart: 5+10+20+40+80+120x5 detik = ±12,6 menit bolak-balik yang
+  // berakhir dengan pesan menyalahkan FFmpeg berhenti, bukan menyebut binary
+  // yang hilang. Kegagalan ini final — mengulanginya tidak akan menolong.
+  if (!proc || proc.pid === undefined) {
+    // Pendengar "error" wajib dipasang: event error tanpa pendengar menjatuhkan
+    // seluruh aplikasi. Sekaligus menaruh kata-kata Node sendiri ("spawn ffmpeg
+    // ENOENT") ke log siaran, tempat orang mencarinya.
+    if (proc) {
+      proc.on('error', (err) => {
+        streamModel.addLog(streamId, 'error', `Proses FFmpeg error: ${err.message}`);
+      });
+    }
+    if (lsProc) killProcess(lsProc);
+    const message = `FFmpeg tidak bisa dijalankan: binary "${ffmpeg.ffmpegPath()}" tidak ditemukan. Periksa FFMPEG_PATH di .env.`;
+    streamModel.setStatus(streamId, 'error', {
+      pid: null,
+      ended_at: new Date().toISOString(),
+      error_message: message,
+    });
+    streamModel.addLog(streamId, 'error', message);
+    cleanupStreamFiles(streamId);
+    log.error(`Stream #${streamId} gagal mulai: ${message}`);
+    return { ok: false, error: message };
+  }
+
   const sessionId = streamModel.openSession(streamId);
   const state = {
     proc,
@@ -868,5 +898,5 @@ module.exports = {
   // liquidsoap sungguhan mustahil di Windows, jadi yang diuji adalah seluruh
   // keputusan di sekitarnya — dan justru di situlah kesalahan bisa lolos tanpa
   // ketahuan sampai siaran benar-benar dijalankan.
-  __test: { isRadioStream, resolveRadioSource, prepareRadioFiles, cleanupRadioFiles, parseStats },
+  __test: { isRadioStream, resolveRadioSource, prepareRadioFiles, cleanupRadioFiles, parseStats, launch },
 };

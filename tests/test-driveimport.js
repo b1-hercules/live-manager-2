@@ -233,7 +233,11 @@ async function main() {
   check('tidak ada video baru tercatat', badJob.videoId, null);
 
   const after2 = require('better-sqlite3')(DB, { readonly: true });
-  check('jumlah video tetap satu', after2.prepare('SELECT COUNT(*) n FROM videos').get().n, 1);
+  // Dihitung per pengguna, bukan seluruh tabel: tes berjalan di atas salinan
+  // database KERJA, jadi video milik pengguna sungguhan ikut terhitung dan
+  // asersi global "tetap satu" gagal begitu ada satu video asli di sana.
+  check('jumlah video milik pengguna tes tetap satu',
+    after2.prepare('SELECT COUNT(*) n FROM videos WHERE user_id = ?').get(userA.id).n, 1);
   after2.close();
   const strays = fs.readdirSync(path.join(ROOT, 'storage/videos')).filter((f) => f.includes(badStart.job.id));
   check('berkas palsu tidak tertinggal di storage', strays, []);

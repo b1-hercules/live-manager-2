@@ -16,6 +16,44 @@ _(kosong — fitur siaran radio sudah selesai, lihat DONE)_
 
 ## DONE
 
+### FFmpeg yang hilang gagal sekali, bukan 12,6 menit — 2026-09-12
+
+`spawn()` tidak melempar untuk binary yang tidak ada: kembaliannya objek dengan
+`pid` undefined, lalu event `error` (ENOENT), disusul `close` berkode -2. Jadi
+`try { ffmpeg.spawnStream() } catch` di `launch()` tidak pernah jalan untuk
+"FFmpeg tidak terpasang". Pola ini sudah diperbaiki untuk liquidsoap di langkah
+6; jalur FFmpeg tertinggal, dan itu tercatat di FINDINGS sebagai utang.
+
+Perilaku lamanya dibuktikan ulang di worktree HEAD, bukan diandaikan:
+
+    launch() mengembalikan : {"ok":true}
+    status yang ditulis    : live
+    masuk daftar berjalan? : true
+    log siaran             : Proses FFmpeg error: spawn ... ENOENT | FFmpeg keluar dengan kode -2
+
+Sesudah itu `handleExit` memutarnya ke auto-restart: 5+10+20+40+80+120×5 detik =
+±12,6 menit bolak-balik, berakhir dengan pesan yang menyalahkan FFmpeg berhenti.
+
+**Impact `launch`: HIGH** — 12 simbol, 3 proses (`start`, `startDueStreams`,
+`timer`). Perubahannya **murni sisipan**: `git diff -U0` menunjukkan nol baris
+dihapus, sama seperti pembuktian `waitForHarbor` di langkah 6. Penjagaannya
+memakai `proc.pid === undefined` — sinkron, jadi tidak menambah jeda pada siaran
+yang normal — bukan menunggu event `spawn`/`error`.
+
+- Kegagalan bersifat final: status `error` dengan kalimat yang menyebut binary-nya
+  dan `FFMPEG_PATH`, tanpa sesi dibuka dan tanpa masuk `running`, sehingga
+  auto-restart tidak pernah tersentuh.
+- Pendengar `error` tetap dipasang sebelum keluar: event `error` tanpa pendengar
+  menjatuhkan seluruh aplikasi. Sekalian menaruh kata-kata Node sendiri
+  ("spawn ffmpeg ENOENT") ke log siaran.
+
+`tests/test-ffmpeg-missing.js` (baru, 20 pemeriksaan) — tanpa database dan tanpa
+server; `spawn`-nya sungguhan, bukan tiruan, supaya yang diuji perilaku Node yang
+sebenarnya. Termasuk kontrol positif: binary yang ADA tetap masuk pengawasan dan
+berstatus live, jadi penjagaannya tidak menyenggol siaran normal. Satu asersi
+menguji bahwa proses tesnya sendiri selamat setelah event `error` datang — tanpa
+pendengar, tes itu mati, bukan merah.
+
 ### Statistik FFmpeg terbaca lagi di mode copy — 2026-09-12
 
 `STATS_RE` mewajibkan `frame=` **dan** `fps=` muncul bersama dalam satu baris
@@ -58,8 +96,9 @@ regex lama dan dengan `parseStats()`, kelima field-nya sama persis.
 `launch` (satu baris, nilai awal `stats`) dan `handleOutput`. Sisanya pergeseran
 baris akibat sisipan `parseStats`, persis jebakan yang sudah dicatat di FINDINGS.
 
-**Ketiga tes integrasi itu sendiri belum dijalankan**: container `livemanager`
-hidup dan penjaga `tests/run.js` menolak. Yang berubah di sana hanya asersi
+Ketiganya **sudah dijalankan** setelah container dihentikan sebentar, dan
+semuanya hijau: `test-concat-cleanup` 29, `test-playlist-e2e` 30,
+`test-single-video-regression` 8. Yang berubah di sana hanya asersi
 `stats.frame > 0` → `stats.timeSeconds > 0`.
 
 ### Liquidsoap ikut diperiksa, dan ketiadaannya kelihatan — 2026-09-12
@@ -916,6 +955,7 @@ Ekstensi tidak lagi dipercaya; isi file diperiksa dari signature.
   PNG yang dinamai `.mp4` ditolak, file hilang dari disk tidak bikin crash.
 
 ## FINDINGS
+- **Tes yang menghitung SELURUH tabel jadi rapuh begitu database kerja berisi data sungguhan** (2026-09-12, ketahuan saat suite penuh dijalankan): `test-driveimport.js` memeriksa `SELECT COUNT(*) n FROM videos` dan mengharapkan 1 — video hasil impornya sendiri. Begitu pengguna mengunggah satu video asli (2026-09-12 04:57), hitungannya jadi 2 dan tesnya merah tanpa ada kode yang berubah. Ini konsekuensi langsung dari `config.paths.db` yang hardcoded: tes berjalan di atas salinan database KERJA, jadi baris milik pengguna selalu ikut terbawa. Diperbaiki dengan menyaring `WHERE user_id = ?`. Pelajaran untuk tes baru: setiap hitungan dan setiap "daftar harus berisi N" wajib dibatasi ke pengguna tes, tidak pernah ke seluruh tabel — kalau tidak, tesnya lulus di mesin kosong dan gagal di mesin yang dipakai.
 Hasil investigasi gap-analysis (GitNexus query/FTS lagi degraded di mesin ini — DLL OpenSSL/VC++ Redist hilang, jadi verifikasi pakai grep + context() manual per simbol, bukan semantic search):
 
 - **Auto-restart ffmpeg crash**: live-manager-2 (`services/streamManager.js` `handleExit`) event-driven via `proc.on('close')`, exponential backoff (5s→120s, max 10x). Lebih matang dari StreamFlow (flat 3s retry). Yang StreamFlow punya dan live-manager-2 nggak: deteksi proses "hidup tapi macet" (polling `lastActivity` staleness tiap interval). Minor gap, bukan prioritas.
@@ -954,7 +994,7 @@ Hasil investigasi gap-analysis (GitNexus query/FTS lagi degraded di mesin ini �
 - **Jangan salurkan `npm test` lewat `tail` saat dijalankan di latar belakang** (2026-09-10): keluaran yang tersimpan hanya ringkasannya, dan detail asersi yang gagal ikut hilang — persis yang dibutuhkan untuk mendiagnosis. Simpan keluaran utuh, potong saat membacanya.
 - **`liquidsoap.checkAvailability()` tidak pernah dipanggil; GitNexus bilang sebaliknya** (2026-09-10, diverifikasi dengan grep): `context` untuk simbol ini melaporkan pemanggil `app.js` `boot` dan `routes/settings.js`, padahal kedua berkas itu memanggil `ffmpegService.checkAvailability()` — fungsi bernama sama di `services/ffmpeg.js`. Index mengatribusikan panggilan ke KEDUA simbol yang namanya kembar. Akibat nyatanya: aplikasi tidak pernah memeriksa ketersediaan liquidsoap, dan halaman Pengaturan hanya menampilkan status FFmpeg. Pelajaran umum: untuk nama yang kembar lintas modul, jawaban `context`/`impact` wajib dicek silang dengan grep pada pola `<modul>.<nama>(`. **Diperbaiki 2026-09-12** (lihat DONE). Impact ulang atas nama kembar itu masih memberi `UNKNOWN` di tingkat atas, lalu memecahnya jadi dua: `services/ffmpeg.js` 13 simbol LOW dan `services/liquidsoap.js` 9 simbol LOW — angka kedua itu yang membuktikan pemanggilnya kini benar-benar ada.
 - **Mesin kerja pindah ke Ubuntu 24.04 (2026-09-10)**: `better-sqlite3@11.10.0` tidak punya prebuilt untuk Node 24 (`No prebuilt binaries found (target=24.21.0)`) dan jatuh ke kompilasi yang butuh `make`. Dipakai Node 22 lewat `mise exec node@22 -- ...` — sama dengan base image `node:22-bookworm-slim`, jadi tes berjalan di runtime produksi. Versi liquidsoap berbeda di tiap tempat: Ubuntu 24.04 **2.2.4**, Debian bookworm (image Docker) **2.1.3**, trixie **2.3.2**; FFmpeg 6.1 di host versus 5.1 di image. Lulus di host tidak membuktikan image.
-- **`spawn()` TIDAK melempar untuk binary yang tidak ada** (2026-09-10, diuji di Node 22.23.2 dan 24.21.0, hasil identik): kembaliannya objek dengan `pid === undefined`, lalu event `error` (`ENOENT`), disusul `close` dengan kode **-2**. Akibatnya `try/catch` di sekitar `liquidsoap.spawnEngine()` dalam `launch()` tidak pernah menangkap "liquidsoap tidak terpasang": FFmpeg tetap dijalankan, status sempat `live`, lalu handler `close` liquidsoap mematikan FFmpeg dan siaran jatuh ke auto-restart berulang alih-alih gagal dengan pesan jelas. Dihitung dari konstanta `streamManager.js`: jeda 5+10+20+40+80+120×5 = **±12,6 menit** bolak-balik (uptime tiap putaran tak pernah melewati `STABLE_AFTER_MS` 60 dtk, jadi hitungan tidak di-reset), berakhir "Gagal setelah 10 percobaan restart"; tanpa auto-restart pesannya "FFmpeg berhenti (kode null)" — menyalahkan FFmpeg. Penyebab sebenarnya hanya ada di satu baris log "Proses liquidsoap error: spawn liquidsoap ENOENT". Ketiga calon titik perbaikan (`launch`, `resolveRadioSource`, `prepareRadioFiles`) HIGH lewat proses `start`/`startDueStreams`/`timer`. Pola `try { spawn } catch` yang sama juga ada di jalur FFmpeg (`ffmpeg.spawnStream`), perilaku lama yang belum disentuh.
+- **`spawn()` TIDAK melempar untuk binary yang tidak ada** (2026-09-10, diuji di Node 22.23.2 dan 24.21.0, hasil identik): kembaliannya objek dengan `pid === undefined`, lalu event `error` (`ENOENT`), disusul `close` dengan kode **-2**. Akibatnya `try/catch` di sekitar `liquidsoap.spawnEngine()` dalam `launch()` tidak pernah menangkap "liquidsoap tidak terpasang": FFmpeg tetap dijalankan, status sempat `live`, lalu handler `close` liquidsoap mematikan FFmpeg dan siaran jatuh ke auto-restart berulang alih-alih gagal dengan pesan jelas. Dihitung dari konstanta `streamManager.js`: jeda 5+10+20+40+80+120×5 = **±12,6 menit** bolak-balik (uptime tiap putaran tak pernah melewati `STABLE_AFTER_MS` 60 dtk, jadi hitungan tidak di-reset), berakhir "Gagal setelah 10 percobaan restart"; tanpa auto-restart pesannya "FFmpeg berhenti (kode null)" — menyalahkan FFmpeg. Penyebab sebenarnya hanya ada di satu baris log "Proses liquidsoap error: spawn liquidsoap ENOENT". Ketiga calon titik perbaikan (`launch`, `resolveRadioSource`, `prepareRadioFiles`) HIGH lewat proses `start`/`startDueStreams`/`timer`. Pola `try { spawn } catch` yang sama juga ada di jalur FFmpeg (`ffmpeg.spawnStream`), perilaku lama yang belum disentuh — **jalur FFmpeg diperbaiki 2026-09-12** (lihat DONE), dengan penjagaan `proc.pid === undefined` alih-alih menunggu event, sebab pid sudah undefined secara sinkron.
 - **Liquidsoap sungguhan butuh ±15 detik sebelum harbor terbuka, dan `-reconnect` TIDAK menolong koneksi pertama** (2026-09-10, diukur di Ubuntu 24.04, liquidsoap 2.2.4, FFmpeg 6.1): "Standard library loaded in 13.93 seconds", harbor terbuka pada 14,8 dtk — sama pada putaran kedua (13,44 dtk; tidak ada cache). FFmpeg dengan flag persis `buildRadioArgs()` (`-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2`) terhadap port yang belum dibuka: **gagal dalam 213 ms**, "Connection refused". Menambah `-reconnect_on_network_error 1` dengan `delay_max 2`: menyerah dalam 1,5 dtk. Dengan `delay_max 16`: mencoba ulang pada +3/+7/+15 dtk dan berhasil, tetapi baru tersambung ±9 dtk setelah harbor siap, dan `delay_max` itu ikut mengubah perilaku sambung-ulang di tengah siaran. Akibatnya bagi `launch()` — yang menjalankan FFmpeg seketika setelah liquidsoap dengan anggapan "-reconnect membuat ia mencoba lagi sendiri" — FFmpeg mati sebelum harbor siap, `handleExit` membunuh liquidsoap, dan restart memulai keduanya dari nol; harbor tidak pernah sempat siap. **Disimpulkan dari dua pengukuran di atas plus pembacaan kode, belum diamati lewat aplikasi.** Tes lama tidak menangkapnya karena harbor tiruannya sudah mendengarkan sebelum FFmpeg jalan. Instalasi lama selamat karena liquidsoap hidup terus sebagai layanan terpisah dan hanya FFmpeg yang diulang.
 - **Uji asap liquidsoap 2.2.4 dengan skrip dari `buildScript()` asli: LULUS** (2026-09-10): harbor terikat `127.0.0.1` saja (dibaca dari `/proc/net/tcp`: `0100007F`), rekaman 10,0 dtk bersuara (mean −20,7 dB), dan `reload_mode="watch"` terbukti — 3 dtk setelah daftar ditulis ulang muncul "Reloading playlist", lalu lagu yang BARU ditambahkan benar-benar diputar. Liquidsoap 2.1.3 (image Docker) belum diuji.
 - **Tes integrasi mengandaikan database kerja yang SUDAH dimigrasi** (2026-09-10): di checkout baru `db/livemanager.db` belum ada (di-`.gitignore`), tes pertama membuatnya sebagai berkas kosong, dan 13 dari 17 berkas tes gagal dengan `no such table: users` (172 pass, 11 fail) — kegagalan lingkungan, bukan kode. Obatnya `npm run migrate` sekali sebelum `npm test`. Tanda pengenalnya: banyak berkas "0 pass, 1 fail" dalam 1–9 detik.
