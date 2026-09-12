@@ -16,6 +16,52 @@ _(kosong — fitur siaran radio sudah selesai, lihat DONE)_
 
 ## DONE
 
+### Statistik FFmpeg terbaca lagi di mode copy — 2026-09-12
+
+`STATS_RE` mewajibkan `frame=` **dan** `fps=` muncul bersama dalam satu baris
+progres. FFmpeg 6.1 ke atas tidak mencetak keduanya pada mode copy — tidak ada
+encoder video yang menghitungnya — jadi `state.stats` tidak pernah terisi di
+instalasi bare-metal: frame 0, bitrate "-", bandwidth dashboard 0, padahal
+siarannya mengalir. Ini juga penyebab tiga tes integrasi merah, yang semuanya
+membuktikan "siaran benar-benar mengalir" lewat `stats.frame > 0`.
+
+**Impact `handleOutput`: HIGH** — 8 simbol, 4 proses (`launch`, `start`,
+`startDueStreams`, `timer`), yaitu jalur setiap siaran dimulai dan setiap
+auto-restart. Dipakai pola yang sudah dua kali terbukti di sini (`buildArgs`,
+`resolveSource`): logikanya pindah ke fungsi baru yang murni, `parseStats()`,
+dan `handleOutput` tinggal delegasi tiga baris.
+
+- Field dibaca satu per satu, bukan satu regex besar. Yang **wajib** hanya
+  `time=` — satu-satunya yang ada di semua versi dan semua mode.
+- `frame`/`fps` bernilai `null`, bukan 0, kalau tidak dilaporkan: nol berarti
+  "tidak ada yang terkirim", null berarti "FFmpeg tidak memberitahu". Dashboard
+  dan halaman detail menyembunyikan yang null.
+- `timeSeconds` (baru) jadi bukti siaran maju, menggantikan `frame` di ketiga
+  tes integrasi itu.
+- `bitrate`/`speed` yang absen mewarisi nilai terakhir, supaya `egress()` tidak
+  mengira siaran berhenti mengirim.
+
+`tests/test-ffmpeg-stats.js` (baru, 28 pemeriksaan) — tanpa database, tanpa
+server, jadi aman dijalankan selagi aplikasi hidup. Selain baris tersalin dari
+kedua versi, tesnya menjalankan FFmpeg yang benar-benar terpasang dengan argumen
+mode copy dan mengurai keluarannya: di Ubuntu 24.04 hasilnya `frame=null
+fps=null time=00:00:02.99 bitrate=215.5kbits/s` — temuan 2026-09-10 terbukti
+ulang, kali ini oleh tes. Dibuktikan MERAH dulu di worktree HEAD
+(`TypeError: parseStats is not a function`), dan regex lama dihadapkan langsung
+ke baris 6.1 mode copy: **tidak cocok**.
+
+Perilaku format lama dijaga identik: tiga baris gaya FFmpeg 5.1 diurai dengan
+regex lama dan dengan `parseStats()`, kelima field-nya sama persis.
+`detect-changes` menandai HIGH, 15 proses, termasuk `handleLiquidsoapOutput`,
+`pushLog`, dan `handleExit` — ketiganya **tidak disentuh**: dari 28 fungsi di
+`streamManager.js`, md5 badan fungsi HEAD versus working tree hanya berbeda pada
+`launch` (satu baris, nilai awal `stats`) dan `handleOutput`. Sisanya pergeseran
+baris akibat sisipan `parseStats`, persis jebakan yang sudah dicatat di FINDINGS.
+
+**Ketiga tes integrasi itu sendiri belum dijalankan**: container `livemanager`
+hidup dan penjaga `tests/run.js` menolak. Yang berubah di sana hanya asersi
+`stats.frame > 0` → `stats.timeSeconds > 0`.
+
 ### Liquidsoap ikut diperiksa, dan ketiadaannya kelihatan — 2026-09-12
 
 `services/liquidsoap.js` punya `checkAvailability()` sejak fitur radio dibuat,
@@ -912,7 +958,7 @@ Hasil investigasi gap-analysis (GitNexus query/FTS lagi degraded di mesin ini �
 - **Liquidsoap sungguhan butuh ±15 detik sebelum harbor terbuka, dan `-reconnect` TIDAK menolong koneksi pertama** (2026-09-10, diukur di Ubuntu 24.04, liquidsoap 2.2.4, FFmpeg 6.1): "Standard library loaded in 13.93 seconds", harbor terbuka pada 14,8 dtk — sama pada putaran kedua (13,44 dtk; tidak ada cache). FFmpeg dengan flag persis `buildRadioArgs()` (`-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2`) terhadap port yang belum dibuka: **gagal dalam 213 ms**, "Connection refused". Menambah `-reconnect_on_network_error 1` dengan `delay_max 2`: menyerah dalam 1,5 dtk. Dengan `delay_max 16`: mencoba ulang pada +3/+7/+15 dtk dan berhasil, tetapi baru tersambung ±9 dtk setelah harbor siap, dan `delay_max` itu ikut mengubah perilaku sambung-ulang di tengah siaran. Akibatnya bagi `launch()` — yang menjalankan FFmpeg seketika setelah liquidsoap dengan anggapan "-reconnect membuat ia mencoba lagi sendiri" — FFmpeg mati sebelum harbor siap, `handleExit` membunuh liquidsoap, dan restart memulai keduanya dari nol; harbor tidak pernah sempat siap. **Disimpulkan dari dua pengukuran di atas plus pembacaan kode, belum diamati lewat aplikasi.** Tes lama tidak menangkapnya karena harbor tiruannya sudah mendengarkan sebelum FFmpeg jalan. Instalasi lama selamat karena liquidsoap hidup terus sebagai layanan terpisah dan hanya FFmpeg yang diulang.
 - **Uji asap liquidsoap 2.2.4 dengan skrip dari `buildScript()` asli: LULUS** (2026-09-10): harbor terikat `127.0.0.1` saja (dibaca dari `/proc/net/tcp`: `0100007F`), rekaman 10,0 dtk bersuara (mean −20,7 dB), dan `reload_mode="watch"` terbukti — 3 dtk setelah daftar ditulis ulang muncul "Reloading playlist", lalu lagu yang BARU ditambahkan benar-benar diputar. Liquidsoap 2.1.3 (image Docker) belum diuji.
 - **Tes integrasi mengandaikan database kerja yang SUDAH dimigrasi** (2026-09-10): di checkout baru `db/livemanager.db` belum ada (di-`.gitignore`), tes pertama membuatnya sebagai berkas kosong, dan 13 dari 17 berkas tes gagal dengan `no such table: users` (172 pass, 11 fail) — kegagalan lingkungan, bukan kode. Obatnya `npm run migrate` sekali sebelum `npm test`. Tanda pengenalnya: banyak berkas "0 pass, 1 fail" dalam 1–9 detik.
-- **FFmpeg 6.1 tidak mencetak `frame=`/`fps=` pada mode copy, jadi `STATS_RE` buta** (2026-09-10, diuji): baris progres perintah copy aplikasi di Ubuntu 24.04 berbentuk `size=     127kB time=00:00:07.65 bitrate= 135.6kbits/s speed=1.07x` — tanpa `frame=` dan `fps=`, pada `-loglevel warning` maupun `info` (dugaan awal soal loglevel keliru). `STATS_RE` di `streamManager.js` mewajibkan keduanya, sehingga `state.stats` tak pernah terisi: frame 0, bitrate `-`, bandwidth dashboard 0. Siarannya sendiri MENGALIR — koneksi TCP ke sink `ESTAB` sepanjang tes. Inilah ketiga kegagalan baseline di Linux (404 pass, 3 fail setelah migrasi): `test-single-video-regression`, `test-playlist-e2e`, `test-concat-cleanup`, semuanya asersi "benar-benar mengalir" yang membaca `stats.frame`. Mode radio me-re-encode video, jadi `frame=` tetap ada di sana. FFmpeg 5.1 (image Docker) belum diperiksa. Belum diperbaiki — menyentuh jalur keluaran setiap siaran.
+- **FFmpeg 6.1 tidak mencetak `frame=`/`fps=` pada mode copy, jadi `STATS_RE` buta** (2026-09-10, diuji): baris progres perintah copy aplikasi di Ubuntu 24.04 berbentuk `size=     127kB time=00:00:07.65 bitrate= 135.6kbits/s speed=1.07x` — tanpa `frame=` dan `fps=`, pada `-loglevel warning` maupun `info` (dugaan awal soal loglevel keliru). `STATS_RE` di `streamManager.js` mewajibkan keduanya, sehingga `state.stats` tak pernah terisi: frame 0, bitrate `-`, bandwidth dashboard 0. Siarannya sendiri MENGALIR — koneksi TCP ke sink `ESTAB` sepanjang tes. Inilah ketiga kegagalan baseline di Linux (404 pass, 3 fail setelah migrasi): `test-single-video-regression`, `test-playlist-e2e`, `test-concat-cleanup`, semuanya asersi "benar-benar mengalir" yang membaca `stats.frame`. Mode radio me-re-encode video, jadi `frame=` tetap ada di sana. FFmpeg 5.1 (image Docker) belum diperiksa. **Diperbaiki 2026-09-12** (lihat DONE); FFmpeg 5.1 sudah diperiksa terpisah dan ternyata masih mencetak `frame=`, jadi masalahnya memang hanya bare-metal.
 - **Stop selama jeda auto-restart membuat siaran tertahan di `stopping`** (2026-09-10, dibuktikan dengan siaran VIDEO biasa, tanpa mengubah kode): tujuan RTMP sengaja mati → FFmpeg gagal → `handleExit` masuk jeda 5 dtk (status `starting`, `restart_count` 1) → Stop ditekan di tengah jeda. Status 3 dtk dan 13 dtk kemudian tetap `stopping`, `ended_at` kosong, `runtime` masih tampil di `/api/overview`. Sebabnya: selama jeda, state masih ada di `running`; `stop()` membatalkan timer lalu memanggil `killProcess()` pada FFmpeg yang SUDAH keluar sendiri — tidak ada event `close` baru, jadi `handleExit` tidak pernah berjalan lagi dan semua pembersihannya (status idle, berkas sementara, sesi, `rotationEngine.onStreamStop`) terlewat. Menekan Mulai lagi memulihkannya, dan `recoverOnBoot` membereskannya saat aplikasi restart. Rotasi metadata TIDAK ikut berjalan untuk siaran yang tertahan: `rotationEngine.tick()` memakai `listRotating()` yang hanya memilih status `live`, jadi kuota YouTube tidak terbakar — padahal `ACTIVE_STATUSES` memuat `stopping`. Bug lama, bukan dari langkah 6; berlaku untuk semua mode. **Diperbaiki** atas keputusan user, hanya di `stop()` (impact MEDIUM, 13 simbol, 6 langsung; `handleExit` tidak disentuh): kalau state punya `restartTimer` — tanda `handleExit` sudah berjalan untuk proses yang mati dan sedang menunggu jeda — `stop()` langsung melakukan penutupan final yang sama dengan cabang `stopping` di `handleExit` (hapus dari `running`, bersihkan berkas, status idle + `ended_at`, log, `rotationEngine.onStreamStop`). Tes `tests/test-stop-restart-delay.js` (baru) dibuktikan MERAH dulu — 2 pass, 5 fail (tertahan `stopping`, `ended_at` kosong, `runtime` tetap tampil) — lalu hijau 7/7.
 - **Liquidsoap 2.1.3 (image Docker) MENOLAK `settings.harbor.bind_addrs := [...]` — mode radio mati total di image** (2026-09-10, diuji di container `livemanager:step6`): `At radio.liq, line 10, char 0-26: ... Error 5: this value has type () -> _ but it should be a subtype of ref(_)`, liquidsoap keluar dengan kode 1 sebelum sempat membuka harbor. Berlaku sejak langkah 1: tak terlihat di Windows (liquidsoap tak pernah jalan) maupun di Ubuntu 24.04 (2.2.4 menerima `:=` sebagai alias `.set()`). Diperbaiki jadi `.set([...])`, sama dengan dua baris setelan di atasnya yang lolos pemeriksaan tipe 2.1.3. Pelajaran: uji asap wajib dijalankan pada versi liquidsoap yang benar-benar dipakai produksi, bukan versi host.
 - **Liquidsoap menolak jalan sebagai root — dan container menjalankan aplikasi sebagai root** (2026-09-10, diuji di container setelah `:=` diperbaiki): `init: security exit, root euid & guid (user & group). Override with settings.init.allow_root.set(true)`, kode keluar 255. `Dockerfile` tidak punya `USER`, jadi setiap siaran radio di image Docker gagal di sini. Hal yang sama berlaku untuk instalasi PM2 yang dijalankan sebagai root di VPS. Dengan perbaikan langkah 6, kegagalan ini tampil sebagai error berisi kalimat liquidsoap tersebut, bukan restart berulang. **Diperbaiki** atas keputusan user dengan `settings.init.allow_root.set(true)` di skrip — liquidsoap hanya menyamai hak proses Node yang menjalankannya, harbor tetap loopback, tanpa telnet; `USER node` di Dockerfile ditolak karena mematahkan kepemilikan volume instalasi lama. Uji asap sesudahnya: **2.1.3 sebagai root** — harbor 127.0.0.1 terbuka setelah 7,2 dtk, rekaman 10 dtk bersuara (−20,3 dB), reload watch memutar lagu baru; **2.2.4 non-root** — setelan itu tidak mengganggu (harbor 15,6 dtk, rekaman utuh, reload bekerja).
