@@ -13,13 +13,18 @@
  *   npm test -- playlist     # hanya yang namanya mengandung "playlist"
  *   npm test -- disk egress  # beberapa saringan sekaligus
  *   npm test -- --force      # abaikan kunci sisa proses yang mati
+ *   npm test -- --skip-app-check   # jalan meski aplikasi sedang hidup (berbahaya)
  */
 
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const runningApp = require('./lib/running-app');
 
-const LOCK = path.join(__dirname, '.run.lock');
+// Lokasi kunci bisa dialihkan lewat LM_TEST_LOCK. Hanya dipakai
+// test-runner-guard.js, yang menjalankan runner ini di dalam runner: tanpa
+// pengalihan, yang bersarang merebut lalu menghapus kunci milik yang di luar.
+const LOCK = process.env.LM_TEST_LOCK || path.join(__dirname, '.run.lock');
 
 // Tes murni (tanpa server/DB) didahulukan supaya kesalahan dasar ketahuan
 // sebelum menunggu tes integrasi yang memakan menit.
@@ -78,6 +83,30 @@ function runOne(file) {
   });
 }
 
+/**
+ * Tolak jalan selagi ada LiveManager yang hidup.
+ *
+ * Tes integrasi mengembalikan db/livemanager.db dari backup lalu menghapus
+ * -wal/-shm. Aplikasi yang sedang memegang berkas itu — container Docker lewat
+ * volume ./db:/app/db, atau proses PM2/npm di host — tidak tahu isinya berganti,
+ * dan yang rusak bukan tesnya, melainkan data pengguna.
+ */
+async function refuseIfAppRunning(skip) {
+  if (skip) return;
+  const port = runningApp.readPort();
+  const { running, version } = await runningApp.probe(port);
+  if (!running) return;
+
+  console.error(`LiveManager sedang berjalan di port ${port}${version ? ` (v${version})` : ''}.`);
+  console.error('Tes integrasi menimpa db/livemanager.db dan menghapus -wal/-shm-nya,');
+  console.error('jadi menjalankannya sekarang bisa merusak data yang sedang dipakai.\n');
+  console.error('Hentikan dulu, lalu jalankan tesnya:');
+  console.error('  docker compose stop      # kalau dipasang lewat Docker');
+  console.error('  pm2 stop livemanager     # kalau dipasang lewat npm + PM2');
+  console.error('\nNyalakan lagi setelah selesai. Kalau yakin aman: npm test -- --skip-app-check');
+  process.exit(1);
+}
+
 function claimLock(force) {
   // Dua runner bersamaan akan saling menimpa backup database dan berebut port
   // yang sama — kegagalannya menyesatkan, dan yang lebih buruk, database kerja
@@ -96,13 +125,16 @@ function claimLock(force) {
 
 async function main() {
   const args = process.argv.slice(2);
+  const FLAGS = ['--force', '--skip-app-check'];
   const force = args.includes('--force');
-  const files = testFiles(args.filter((a) => a !== '--force'));
+  const skipAppCheck = args.includes('--skip-app-check');
+  const files = testFiles(args.filter((a) => !FLAGS.includes(a)));
   if (!files.length) {
     console.error('Tidak ada tes yang cocok dengan saringan itu.');
     process.exit(1);
   }
 
+  await refuseIfAppRunning(skipAppCheck);
   claimLock(force);
 
   console.log(`Menjalankan ${files.length} berkas tes (berurutan).`);

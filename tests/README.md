@@ -7,6 +7,7 @@ build step dan menahan diri menambah dependency.
 npm test                 # semua, berurutan
 npm test -- playlist     # hanya berkas yang namanya mengandung "playlist"
 npm test -- --force      # abaikan kunci (lihat di bawah)
+npm test -- --skip-app-check   # jalan meski aplikasi hidup (berbahaya, lihat di bawah)
 ```
 
 Runner memasang kunci `tests/.run.lock` selama berjalan dan menolak jalan kalau
@@ -54,6 +55,31 @@ database kerja sungguhan. Polanya:
 Karena itu `run.js` menjalankan berkas satu per satu, tidak paralel: dua tes
 bersamaan akan saling menimpa backup. Kalau nanti tes makin sering dijalankan,
 pertimbangkan menambah env `DB_PATH` supaya tes berjalan di database sendiri.
+
+### Hentikan aplikasinya dulu
+
+Langkah 4 menghapus `-wal`/`-shm`. Aplikasi yang sedang memegang berkas itu —
+container Docker lewat volume `./db:/app/db`, atau proses PM2/npm di host —
+tidak tahu isi databasenya berganti di bawahnya. Yang rusak bukan tesnya,
+melainkan data pengguna.
+
+`run.js` karena itu memeriksa `/health` di port dari `.env` sebelum menjalankan
+apa pun, dan menolak jalan kalau ada yang menjawab:
+
+```bash
+docker compose stop      # kalau dipasang lewat Docker
+pm2 stop livemanager     # kalau dipasang lewat npm + PM2
+npm test
+docker compose start     # nyalakan lagi setelah selesai
+```
+
+Probe-nya lewat `/health`, bukan `docker ps`: satu pemeriksaan yang sama
+menangkap Docker, PM2, maupun `npm start`, dan tidak menuntut docker CLI ada.
+Bentuk jawabannya ikut diperiksa, jadi aplikasi lain yang kebetulan memakai port
+itu tidak membuat tes menolak jalan. `--skip-app-check` melewatinya — hanya
+pakai kalau databasenya memang bukan yang sedang dipakai.
+
+Dijaga `test-runner-guard.js`.
 
 ## Mem-boot app di dalam tes
 
